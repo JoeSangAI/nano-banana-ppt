@@ -6,6 +6,12 @@ All notable changes to this project will be documented in this file.
 
 ### 🚀 新特性 (New Features)
 
+*   **模型底座全面升级 (Model Upgrade)**：
+    *   全线业务代理（NarrativeAgent、VisualAgent、TemplateAgent）已从 `gemini-3-pro-preview` 升级至最新一代高智力模型 **`gemini-3.1-pro-preview`**，带来更深度的业务理解和更精准的提示词生成。
+    *   底层图像生成模型从 `gemini-3-pro-image-preview` 升级至 **`gemini-3.1-flash-image-preview`**，在保持画质的同时大幅提升渲染速度。
+*   **强化叙事提取蓝图 (Deep Narrative Blueprint)**：
+    *   NarrativeAgent 中的分析引擎引入了“深度叙事蓝图”层，不再仅仅提取骨架，更规划演讲的节奏、情绪起伏和内容映射，并支持用户直接注入 Briefing (意图)，确保幻灯片核心逻辑服务于讲述者意图。
+    *   支持了更多样化的正文形态（如 `bullets`, `data`, `quote` 等），并改善了视觉提示工程以按需有条件地使用纯列表排版。
 *   **双阶段自动化流 (Two-Phase Auto Pipeline)**：
     *   **Phase 1 (Plan)**: 引入了基于 Markdown 的审阅机制。首先生成 `plan_for_review.md`，允许用户在生成昂贵的图片前进行确认和修改。
     *   **Phase 2 (Execute)**: 读取确认后的计划文件进行渲染和 PPT 组装。
@@ -19,6 +25,7 @@ All notable changes to this project will be documented in this file.
 
 ### 🛠 重构与优化 (Refactoring & Improvements)
 
+*   **长文本超时处理**: 将 `NarrativeAgent` 的请求超时时间放宽至 600 秒，以完美支持 50+ 页超大型演示文档的逻辑推演。
 *   **包结构标准化**: 重新组织代码架构为标准的 Python 模块 (`nano_banana_ppt`)，清理了原有分散的脚本，提供更清晰的 `agents`、`core` 和 `utils` 目录划分。
 *   **API 稳定性提升**: 将默认重试次数增加至 5 次，并引入指数退避策略 (最高 48 秒)，有效降低由于 API 并发限流导致的生成失败概率。
 *   **并发控制**: 设置最高并发线程数（max concurrent workers = 2），以平滑处理图片生成请求并防止触发速率限制。
@@ -28,3 +35,4 @@ All notable changes to this project will be documented in this file.
 
 *   修复了导入路径导致的 `ModuleNotFoundError`。
 *   修复了生成全黑或不完整图片的角点问题。
+*   优化并修复了纯要点 (bullet points) 排版的过度生成情况。
