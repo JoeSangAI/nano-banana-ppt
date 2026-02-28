@@ -85,7 +85,7 @@ def regenerate_failed_pages(pptx_file: str, plan_file: str, failed_pages: list =
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
-        print("用法: python -m tools.nano_banana_ppt.utils.regenerate <pptx_file> <plan_json> [pages]")
+        print("用法: python -m nano_banana_ppt.utils.regenerate <pptx_file> <plan_json> [pages]")
         sys.exit(1)
     
     pptx = sys.argv[1]

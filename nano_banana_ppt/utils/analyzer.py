@@ -9,6 +9,8 @@ from io import BytesIO
 from PIL import Image
 from openai import OpenAI
 
+from .llm_client import chat_completion_with_fallback, MODEL_FALLBACK_CHAIN
+
 # 配置日志
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -21,7 +23,7 @@ class PPTAnalyst:
             timeout=120.0,
             max_retries=3
         )
-        self.model = "gemini-3-pro-preview"
+        self.model = "gemini-3.1-pro-preview"
 
     def analyze_slides(self, notebooklm_images, our_images):
         """对比分析两组幻灯片"""
@@ -85,8 +87,8 @@ class PPTAnalyst:
         # 调用模型
         try:
             logger.info("正在进行视觉对比分析...")
-            response = self.client.chat.completions.create(
-                model=self.model,
+            response = chat_completion_with_fallback(
+                self.client, model=self.model, model_fallback=MODEL_FALLBACK_CHAIN,
                 messages=messages,
                 temperature=0.5,
                 max_tokens=2000
