@@ -97,15 +97,63 @@ class NarrativeAgent:
             tables.append({"headers": header_row, "rows": rows})
         return tables
 
-    def extract_images_from_markdown(self, content: str) -> List[str]:
+    def extract_images_from_markdown(self, content: str, base_dir: str = None) -> List[str]:
         """
         从 Markdown 内容中提取图片链接
         """
         import re
+        import os
         # 匹配 ![alt](url) 格式
         images = re.findall(r'!\[.*?\]\((.*?)\)', content)
-        # 过滤掉非图片链接（简单的扩展名检查）
-        valid_images = [img for img in images if img.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp'))]
+        
+        valid_images = []
+        for img in images:
+            img = img.strip()
+            
+            # 如果是网络图片，尝试下载到 base_dir 并替换为本地路径
+            if img.lower().startswith('http://') or img.lower().startswith('https://'):
+                if base_dir:
+                    import urllib.request
+                    from urllib.parse import urlparse
+                    try:
+                        # Extract filename from URL or generate one
+                        parsed_url = urlparse(img)
+                        filename = os.path.basename(parsed_url.path)
+                        if not filename or not any(filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']):
+                            import uuid
+                            filename = f"{uuid.uuid4()}.jpeg" # default to jpeg if unknown
+                        
+                        local_path = os.path.join(base_dir, filename)
+                        
+                        # Only download if it doesn't exist
+                        if not os.path.exists(local_path):
+                            logger.info(f"下载网络图片: {img} -> {local_path}")
+                            # Add headers to avoid 403 Forbidden
+                            import ssl
+                            context = ssl._create_unverified_context()
+                            req = urllib.request.Request(img, headers={'User-Agent': 'Mozilla/5.0'})
+                            with urllib.request.urlopen(req, context=context) as response, open(local_path, 'wb') as out_file:
+                                out_file.write(response.read())
+                        
+                        valid_images.append(local_path)
+                    except Exception as e:
+                        logger.warning(f"无法下载网络图片 {img}: {e}")
+                continue
+                
+            if img.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp')):
+                # 尝试将相对路径转换为绝对路径
+                if base_dir and not os.path.isabs(img):
+                    abs_path = os.path.normpath(os.path.join(base_dir, img))
+                    if os.path.exists(abs_path):
+                        valid_images.append(abs_path)
+                    else:
+                        valid_images.append(img) # 备用保留
+                elif base_dir and img.startswith('http'):
+                    # The previous logic incorrectly ignored all http links early on, but we want to download them
+                    pass # Handled below
+                else:
+                    valid_images.append(img)
+                    
         return valid_images
 
     def _extract_core_logic(self, content_context: str, constraints: Dict) -> str:
@@ -180,7 +228,7 @@ class NarrativeAgent:
                     logger.error(f"逻辑骨架提取最终失败: {e}")
                     raise
 
-    def generate_narrative_outline(self, content_context: str, constraints: Dict) -> List[Dict]:
+    def generate_narrative_outline(self, content_context: str, constraints: Dict, content_file_path: str = None) -> List[Dict]:
         """
         生成深度叙事大纲 (Two-Step Pipeline)
         """
@@ -192,8 +240,9 @@ class NarrativeAgent:
         logger.info("🧠 Narrative Agent: 正在构建叙事架构 (Phase 2/2: 生成分页 JSON)...")
 
         # 提取源文档中的图片
-        source_images = self.extract_images_from_markdown(content_context)
-        source_images_str = "\n".join([f"- {img}" for img in source_images[:5]]) # 仅列出前5张作为参考
+        base_dir = os.path.dirname(os.path.abspath(content_file_path)) if content_file_path else None
+        source_images = self.extract_images_from_markdown(content_context, base_dir=base_dir)
+        source_images_str = "\n".join([f"- {img}" for img in source_images[:10]]) # 列出前10张作为参考
         
         # 动态调整大纲结构要求
         page_count_constraint = constraints.get('page_count', '10')
@@ -229,8 +278,11 @@ class NarrativeAgent:
 【输入原文】 (用于提取详细的论据、金句、数据和案例)
 {content_context[:50000]} ... (内容过长已截断)
 
-【可用素材图片】
-(如果内容涉及到以下图片所代表的场景或产品，请在 visual_suggestion 中明确引用)
+【可用素材图片 (Source Images)】
+你需要仔细分析以下原生图片的 URL 名字或提供的信息。
+如果用户在原文中包含了本地图片路径（如下所列），你必须判断该图片是否与当前幻灯片的主题和文本内容**强相关**。
+**只有当图片的内容确实能作为当前页面观点的有效视觉证据或补充时，才将其加入 `native_images` 字段。**
+**千万不要随意、草率地将不相关的图片硬塞到页面中！宁可不放图片，也不要放错图片。**
 {source_images_str}
 
 【任务要求】
@@ -254,6 +306,7 @@ class NarrativeAgent:
    - 使用 `data` 页来单独呈现硬核数据对比。
    - **流程、框架、对比**：当内容描述过程（如 Input→AI→Output）、层级（如 1+N+X 金字塔）、或对比关系（如 注意力↘ vs 内容↗）时，必须使用 `flowchart`、`framework` 或 `comparison` 类型，并在 visual_suggestion 中明确要求绘制对应图表。
    - 首页 `cover` 极简，只写大主题和分享人。
+   - **重要：`visual_suggestion` (配图/画面建议) 应该描述由 AI 生成的背景或插图。如果该页使用了 `native_images` (原生图片)，请在 `visual_suggestion` 中描述一个适合衬托这些原生图片的背景环境，并明确说明需要为原生图片留出空间。两者是互补关系。**
 
 4. **页面类型定义**：
    - `cover`: 封面 (仅第1页)
@@ -268,12 +321,14 @@ class NarrativeAgent:
    - `breathing`: 呼吸页 (轻页面：一个问句/一个数字/半屏留白+过渡语，用于消化与停顿)
    - `ending`: 封底/致谢页。**结尾优先放一句可拍照的金句**，提升「抬机率」。
 
-5. **表格与图表 (Table & Chart)**：
+5. **表格、图表与原生图片排版 (Tables, Charts & Native Images)**：
    - **精确对比用表格**，**趋势/比例用图表**。避免同一页同时塞满表格+图表。
-   - 如果原文包含 Markdown 表格，必须单独作为一页，且 type 为 "table" 或 "chart"。
-   - 在 text_content 中增加 table_data 字段：
-     table_data: {{ "headers": ["列1", "列2", ...], "rows": [["val1", "val2", ...], ...] }}
-   - 增加 visualization 字段：表格式展示用 "table"；适合图表展示用 "bar"|"line"|"pie"|"auto"（auto 由系统自动选择）。
+   - 如果原文包含 Markdown 表格，单独作为一页，type 为 "table" 或 "chart"。并在 text_content 中增加 table_data 字段。
+   - **原生图片智能排版 (Native Images Semantic Layout - VERY IMPORTANT)**：如果你判断原文中的某张本地图片与该页内容**强相关**（见上方"可用素材图片"列表），你**必须**在 JSON 中使用 `native_images` 字段来进行排版规划。
+     - 只有在你非常有把握这张图片代表什么，并且它适合这张 PPT 时才使用它。
+     - 为该页规划每个图片的绝对路径（path）和相对绝对坐标 `bounding_box`。
+     - `left`, `top`, `width`, `height` 取值范围均在 `0.0` 到 `1.0` 之间。请根据内容的多少和图片的预期比例（横图/竖图）给出合理的 `width` 和 `height`，确保图片不要变形或被拉伸得太离谱。例如，如果是脑部扫描图（可能是横图或方图），给它大约 `width: 0.4, height: 0.5` 的空间。
+     - **极度重要避让原则**：在 `visual_suggestion` 中，**必须明确写出**「请在画面[左侧/右侧/中间]留出大片纯净空白区域，用于放置原生图片」。如果不写，AI生成的文字会和原生图片严重重叠！
 
 【JSON 数据结构标准】
 [
@@ -291,12 +346,19 @@ class NarrativeAgent:
         "headline": "大标题，必须是带有观点的断言句 (例如：盲区：为何我们看不见？)",
         "table_data": {{ "headers": ["H1"], "rows": [["v1"]] }},
         "subhead": "副标题/导语（可选，仅当能补充关键信息时填写）",
-        "body_format": "paragraph|bullets|data|quote|mixed（正文形态：段落/要点/数据块/引用/混合）",
+        "body_format": "paragraph|bullets|data|quote|mixed",
         "body": [
             "极简论据1 (10-30字)：提炼自原文核心要点。", 
             "极简论据2 (10-30字)：提炼自原文核心要点。"
         ]
     }},
+    "native_images": [
+        {{
+            "path": "原文中提到的图片路径或描述链接",
+            "semantic_role": "这张图的业务意图，例如：新产品主界面，占据左侧",
+            "bounding_box": {{ "left": 0.05, "top": 0.2, "width": 0.4, "height": 0.6 }}
+        }}
+    ],
     "speaker_notes": "演讲者备注（详细）：在这里保留原文中详细的案例、完整的长句论述、上下文背景等，确保讲师在看备注时能找回原文所有的细节深度。",
     "visual_suggestion": "画面隐喻/配图建议。结合蓝图中的视觉调性（Tone & Visual Metaphor），给出具体、有创意的画面描述。如果有可用的 source image 请注明。"
   }},
@@ -379,6 +441,26 @@ class NarrativeAgent:
             # 展示 speaker notes
             if page.get('speaker_notes'):
                 preview_text += f"   **🎙️ 演讲备注 (Speaker Notes)**：\n     {page['speaker_notes']}\n"
+
+            # 展示原生图片排版计划 (Native Images Layout)
+            native_images = page.get('native_images', [])
+            if not native_images and page.get('native_image'):
+                native_images = [page.get('native_image')]
+                
+            if native_images:
+                preview_text += f"   **📥 原生图片排版计划 (Native Images Layout)**：\n"
+                for idx, img in enumerate(native_images):
+                    path = img.get('path', 'unknown_path')
+                    role = img.get('semantic_role', '')
+                    bbox = img.get('bounding_box', {})
+                    if bbox:
+                        bbox_str = f"left: {bbox.get('left')}, top: {bbox.get('top')}, width: {bbox.get('width')}, height: {bbox.get('height')}"
+                    else:
+                        bbox_str = img.get('layout', 'center')
+                    # 采用 HTML img 标签，可以在 Markdown 预览模式中直接显示小图，并隐藏长路径
+                    import os
+                    img_src = f"file://{path}" if os.path.isabs(path) else path
+                    preview_text += f"     {idx+1}. {role} <img src=\"{img_src}\" height=\"40\" style=\"vertical-align: middle;\" /> (`bounding_box`: {bbox_str})\n"
             
             preview_text += "\n"
             

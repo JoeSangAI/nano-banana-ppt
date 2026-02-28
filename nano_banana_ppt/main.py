@@ -165,7 +165,7 @@ def generate_plan(content_file: str, template_file: str = None,
         "style_preference": style_preference or inferred.get("style_preference", "专业商务"),
         "briefing": briefing,
     }
-    narrative_outline = narrative_agent.generate_narrative_outline(content_context, constraints)
+    narrative_outline = narrative_agent.generate_narrative_outline(content_context, constraints, content_file_path=content_file)
     print(f"✅ 叙事大纲生成完成，共 {len(narrative_outline)} 页")
 
     # Step 4: 生成人类可审阅的 plan_for_review.md（不生成 plan.json）
@@ -261,6 +261,26 @@ def execute_from_plan(plan_input: str, output_name: str = None, resolution: str 
             json.dump(plan_data, f, ensure_ascii=False, indent=2)
         print(f"✅ 技术计划已保存: {plan_json_path}")
         plan_path = str(plan_json_path)
+    else:
+        # Check if plan_for_review.md exists even if plan.json was targeted directly
+        # This ensures we pick up edits to the MD file if the user ran execute on the directory
+        review_md = Path(proj_dir) / REVIEW_MD_FILENAME
+        if review_md.exists():
+            print("\n📄 检测到人类审阅计划，正在重新解析并派生技术计划...")
+            with open(review_md, "r", encoding="utf-8") as f:
+                md_text = f.read()
+            parsed = parse_review_md(md_text)
+            if parsed.get("pages"):
+                pmeta = parsed.get("meta", {})
+                content_file = pmeta.get("content_file", "")
+                api_key = os.getenv("OPENAI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+                api_base = os.getenv("OPENAI_API_BASE")
+                plan_data = derive_technical_plan(parsed, proj_dir, content_file, api_key=api_key, api_base=api_base)
+                plan_json_path = Path(proj_dir) / "plan.json"
+                with open(plan_json_path, "w", encoding="utf-8") as f:
+                    json.dump(plan_data, f, ensure_ascii=False, indent=2)
+                print(f"✅ 技术计划已更新并保存: {plan_json_path}")
+                plan_path = str(plan_json_path)
 
     with open(plan_path, 'r', encoding='utf-8') as f:
         plan_data = json.load(f)

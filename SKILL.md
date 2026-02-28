@@ -31,6 +31,16 @@ Automates professional PowerPoint creation using Google's Nano Banana 2 (Gemini 
 
 表格样式由 `style_config` 驱动：主色、背景、字号（标题 18–24pt、正文 14–18pt）、列宽比例、表头底色与加粗、行间留白。
 
+## 原生图片排版 (Native Images Semantic Layout)
+
+通过 `plan_for_review.md` 中的 `- **📥 原生图片**：` 配置，支持在 AI 生成的背景上精准贴合原图。
+
+**排版机制：**
+1. **自动提取与智能选择**：`NarrativeAgent` 会自动提取源文档中的本地或网络图片（并下载），根据上下文严格判断相关性。只有强相关（如数据图表、新闻截图）才会保留。
+2. **强制背景留白**：在生成背景的 Prompt 中，注入严厉的禁令（`CRITICAL VISUAL CONSTRAINT...`），强迫 AI 在指定区域（如左侧、右侧）留出不含任何文字和复杂图形的纯色安全区。
+3. **视觉智能对齐 (VLM Layout)**：在背景生成后，调用 `Gemini 1.5 Pro`（视觉能力）去“看”一眼这页 PPT，根据背景上的留白和文字走势，计算出一个**完美的、带有安全边距的绝对居中坐标**，彻底避免图片压字或紧贴边缘的尴尬，实现真正的人类设计师级排版。
+4. **完美比例缩放**：最后在插入 PPTX 时，严格保持原生图片的长宽比（Aspect Ratio），在 VLM 给定的安全框内等比缩放并绝对居中。
+
 ## When to Use
 - User asks for "PPT", "slides", "deck", or "presentation".
 - Converting existing documents/notes into slide format with high visual fidelity.

@@ -86,17 +86,20 @@ def build_review_md(
 
         lines.append(f"### 第 {pnum} 页 · {ptype_cn}")
         lines.append("")
-        lines.append(f"- **页面类型**：{ptype_cn}")
         lines.append(f"- **标题**：{headline}")
         if subhead:
             lines.append(f"- **副标题**：{subhead}")
-        if narrative_role:
-            lines.append(f"- **叙事角色**：{narrative_role}")
-        if one_takeaway:
-            lines.append(f"- **本页收获**：{one_takeaway}")
-        lift_rate = page.get("lift_rate") or tc.get("lift_rate")
-        if lift_rate:
-            lines.append(f"- **抬机率**：{lift_rate}")
+        
+        # Metadata fields are omitted from review markdown to keep it clean for the user
+        # They will still exist in the underlying data structure and plan.json
+        # lines.append(f"- **页面类型**：{ptype_cn}")
+        # if narrative_role:
+        #     lines.append(f"- **叙事角色**：{narrative_role}")
+        # if one_takeaway:
+        #     lines.append(f"- **本页收获**：{one_takeaway}")
+        # lift_rate = page.get("lift_rate") or tc.get("lift_rate")
+        # if lift_rate:
+        #     lines.append(f"- **抬机率**：{lift_rate}")
 
         if table_data:
             headers = table_data.get("headers", [])
@@ -112,8 +115,11 @@ def build_review_md(
                 lines.append("| " + " | ".join(str(c) for c in row) + " |")
             lines.append("")
         elif body:
+            # We don't need to show body format to the user either
+            # body_format = tc.get("body_format", "bullets")
+            # lines.append(f"- **正文形态**：{body_format}")
+            
             body_format = tc.get("body_format", "bullets")
-            lines.append(f"- **正文形态**：{body_format}")
             lines.append("- **正文**：")
             if body_format in ("paragraph", "quote", "data") and len(body) <= 2:
                 for b in body:
@@ -127,6 +133,37 @@ def build_review_md(
         if speaker_notes:
             lines.append("- **🎙️ 演讲备注 (Speaker Notes)**：")
             lines.append(f"  > {speaker_notes.replace(chr(10), chr(10) + '  > ')}")
+            lines.append("")
+
+        native_images = page.get("native_images", [])
+        if not native_images and page.get("native_image"):
+            native_images = [page.get("native_image")]
+            
+        if native_images:
+            lines.append("- **📥 原生图片**：")
+            for idx, img in enumerate(native_images):
+                path = img.get('path', 'unknown_path')
+                role = img.get('semantic_role', '')
+                bbox = img.get('bounding_box', {})
+                if bbox:
+                    bbox_str = f"left: {bbox.get('left')}, top: {bbox.get('top')}, width: {bbox.get('width')}, height: {bbox.get('height')}"
+                else:
+                    bbox_str = img.get('layout', 'center')
+                # 简化格式，去掉多余的信息和标签，只保留角色、预览和位置信息
+                import os
+                
+                # Make sure the path is correct relative to content_file when generating review md
+                # Or keep it as absolute path
+                content_file = meta.get("content_file", "")
+                base_dir = os.path.dirname(os.path.abspath(content_file)) if content_file else ""
+                
+                if not os.path.isabs(path) and base_dir:
+                    abs_path = os.path.normpath(os.path.join(base_dir, path))
+                    if os.path.exists(abs_path):
+                        path = abs_path
+                
+                img_src = f"file://{path}" if os.path.isabs(path) else path
+                lines.append(f"  {idx+1}. {role} <img src=\"{img_src}\" height=\"40\" style=\"vertical-align: middle;\" /> (`{bbox_str}`)")
             lines.append("")
 
         lines.append(f"- **配图/画面**：{visual_suggestion}")
@@ -192,6 +229,10 @@ def parse_review_md(md_text: str) -> Dict[str, Any]:
 
     for pnum_str, ptype_cn, block in page_blocks:
         pnum = int(pnum_str)
+        # 页面类型不再在 markdown 中体现，从原始数据或者推测，或者默认为 content
+        # 我们需要保留它如果原本就在 JSON 中，但因为 plan_for_review 会被重新解析生成 JSON，
+        # 所以我们需要尽量保证不要丢失信息。既然我们在 title 里写了 "### 第 X 页 · 页面类型"
+        # 我们可以从标题里提取类型
         ptype = type_map.get(ptype_cn, "content")
         headline = ""
         subhead = ""
@@ -203,38 +244,129 @@ def parse_review_md(md_text: str) -> Dict[str, Any]:
         table_data = None
         visual_suggestion = ""
         speaker_notes_lines = []
+        native_images = []
 
         in_body = False
         in_notes = False
+        in_native_images = False
+        
         for raw_line in block.split("\n"):
             line = raw_line.rstrip()
             if re.match(r"^-\s*\*\*标题\*\*[：:]\s*", line):
                 headline = re.sub(r"^-\s*\*\*标题\*\*[：:]\s*", "", line).strip()
+                in_native_images = False
             elif re.match(r"^-\s*\*\*副标题\*\*[：:]\s*", line):
                 subhead = re.sub(r"^-\s*\*\*副标题\*\*[：:]\s*", "", line).strip()
+                in_native_images = False
+            # 这些字段已在写入时被注释掉，但为了向后兼容解析，仍保留
             elif re.match(r"^-\s*\*\*叙事角色\*\*[：:]\s*", line):
                 narrative_role = re.sub(r"^-\s*\*\*叙事角色\*\*[：:]\s*", "", line).strip()
+                in_native_images = False
             elif re.match(r"^-\s*\*\*本页收获\*\*[：:]\s*", line):
                 one_takeaway = re.sub(r"^-\s*\*\*本页收获\*\*[：:]\s*", "", line).strip()
+                in_native_images = False
             elif re.match(r"^-\s*\*\*抬机率\*\*[：:]\s*", line):
                 lift_rate = re.sub(r"^-\s*\*\*抬机率\*\*[：:]\s*", "", line).strip()
+                in_native_images = False
             elif re.match(r"^-\s*\*\*正文形态\*\*[：:]\s*", line):
                 body_format = re.sub(r"^-\s*\*\*正文形态\*\*[：:]\s*", "", line).strip()
+                in_native_images = False
             elif line.strip() == "- **正文**：" or line.strip() == "- **正文**: ":
                 in_body = True
                 in_notes = False
+                in_native_images = False
             elif line.strip().startswith("- **🎙️ 演讲备注"):
                 in_body = False
                 in_notes = True
+                in_native_images = False
+            elif line.strip().startswith("- **📥 原生图片"):
+                in_body = False
+                in_notes = False
+                in_native_images = True
             elif in_body and re.match(r"^\s+-\s+", line) and "**" not in line[:20]:
                 body.append(re.sub(r"^\s+-\s+", "", line).strip())
             elif in_body and re.match(r"^\s{2,}\S", line) and body_format in ("paragraph", "quote", "data", "mixed") and not line.strip().startswith("-"):
                 body.append(line.strip())
             elif in_notes and re.match(r"^\s*>\s+", line):
                 speaker_notes_lines.append(re.sub(r"^\s*>\s+", "", line))
+            elif in_native_images and re.match(r"^\s*\d+\.\s+", line):
+                # 支持四种格式：
+                # 1. 带有 html img 标签的精简格式: role <img src="file://path" ... /> (`left: ...`)
+                # 2. 带有 html img 标签: role <img src="file://path" ... /> (`bounding_box`: ...)
+                # 3. 带有 markdown 预览图片链接: ![role](path) (`bounding_box`: ...)
+                # 4. 带有 markdown 普通链接: [filename](path) -> role (`bounding_box`: ...)
+                # 5. 只有路径的旧格式: `path` -> role (`bounding_box`: ...)
+                
+                # 1. & 2. 尝试匹配 HTML 格式（支持包含或不包含 'bounding_box:'）
+                # 兼容带有 file:// 协议和不带的普通路径
+                img_match = re.search(r"^(.*?)\s*<img src=\"(?:file://)?([^\"]+)\".*?\/>\s*\(`(?:bounding_box`:\s*)?(.*?)`?\)", re.sub(r"^\s*\d+\.\s+", "", line))
+                if img_match:
+                    role = img_match.group(1).strip()
+                    path = img_match.group(2).strip()
+                    bbox_str = img_match.group(3).strip()
+                    if bbox_str.endswith(')'): # handle optional backticks
+                        bbox_str = bbox_str[:-1].strip()
+                    if bbox_str.endswith('`'):
+                        bbox_str = bbox_str[:-1].strip()
+                        
+                    # Handle paths that don't have file:// but still got matched into group(2)
+                    if path.startswith("file://"):
+                        path = path[7:]
+                else:
+                    img_match = re.search(r"!\[(.*?)\]\((.*?)\)\s*\(`bounding_box`:\s*(.*?)\)", line)
+                    if img_match:
+                        role = img_match.group(1).strip()
+                        path = img_match.group(2).strip()
+                        bbox_str = img_match.group(3).strip()
+                    else:
+                        img_match = re.search(r"\[([^\]]+)\]\(([^)]+)\)\s*->\s*(.*?)\s*\(`bounding_box`:\s*(.*?)\)", line)
+                        if img_match:
+                            path = img_match.group(2).strip()
+                            role = img_match.group(3).strip()
+                            bbox_str = img_match.group(4).strip()
+                        else:
+                            img_match = re.search(r"`([^`]+)`\s*->\s*(.*?)\s*\(`bounding_box`:\s*(.*?)\)", line)
+                            if img_match:
+                                path = img_match.group(1).strip()
+                                role = img_match.group(2).strip()
+                                bbox_str = img_match.group(3).strip()
+                
+                if img_match:
+                    bbox = {}
+                    # Try to parse left, top, width, height from bbox_str
+                    for part in bbox_str.split(","):
+                        if ":" in part:
+                            k, v = part.split(":", 1)
+                            try:
+                                bbox[k.strip()] = float(v.strip())
+                            except ValueError:
+                                pass
+                                
+                    # Attempt to resolve relative paths
+                    import os
+                    content_file = meta.get("content_file", "")
+                    base_dir = os.path.dirname(os.path.abspath(content_file)) if content_file else ""
+                    if not os.path.isabs(path) and base_dir:
+                        abs_path = os.path.normpath(os.path.join(base_dir, path))
+                        if os.path.exists(abs_path):
+                            path = abs_path
+                    elif not os.path.exists(path):
+                        # Attempt to resolve if it's just a filename
+                        filename = os.path.basename(path)
+                        if base_dir:
+                            abs_path = os.path.normpath(os.path.join(base_dir, filename))
+                            if os.path.exists(abs_path):
+                                path = abs_path
+                    
+                    native_images.append({
+                        "path": path,
+                        "semantic_role": role,
+                        "bounding_box": bbox
+                    })
             elif "|" in line and re.match(r"^\|", line):
                 in_body = False
                 in_notes = False
+                in_native_images = False
                 cells = [c.strip() for c in line.split("|")[1:-1] if c.strip()]
                 if not cells or all(c.replace("-", "").strip() == "" for c in cells):
                     continue
@@ -246,6 +378,7 @@ def parse_review_md(md_text: str) -> Dict[str, Any]:
             elif re.match(r"^-\s*\*\*配图/画面\*\*[：:]\s*", line):
                 in_body = False
                 in_notes = False
+                in_native_images = False
                 visual_suggestion = re.sub(r"^-\s*\*\*配图/画面\*\*[：:]\s*", "", line).strip()
             elif line.strip() != "":
                 # If we are not in notes or body, don't clear flags for empty lines, but clear for other markers
@@ -273,6 +406,9 @@ def parse_review_md(md_text: str) -> Dict[str, Any]:
             page_dict["one_takeaway"] = one_takeaway
         if lift_rate:
             page_dict["lift_rate"] = lift_rate
+        if native_images:
+            page_dict["native_images"] = native_images
+            
         pages.append(page_dict)
 
     pages.sort(key=lambda p: p["page_num"])
@@ -331,7 +467,8 @@ Text to display (render exactly, do not translate Chinese):
 
 Visual/imagery direction from human: {visual_suggestion}
 
-Output: A single, detailed English prompt string for image generation. No explanation. Include: background, layout, typography placement. CRITICAL: Render each body item EXACTLY ONCE (no duplicates). You may use subtle list markers (like small dots) ONLY if formatting a list of multiple small points; otherwise, do not use bullet points for diagrams or frameworks. CRITICAL negative constraints: no logos, no watermarks, NO black blocks, NO solid black rectangles, NO empty black corners - use seamless full-bleed composition extending to all edges."""
+Output: A single, detailed English prompt string for image generation. No explanation. Include: background, layout, typography placement. CRITICAL: Render each body item EXACTLY ONCE (no duplicates). You may use subtle list markers (like small dots) ONLY if formatting a list of multiple small points; otherwise, do not use bullet points for diagrams or frameworks. CRITICAL negative constraints: no logos, no watermarks, NO black blocks, NO solid black rectangles, NO empty black corners - use seamless full-bleed composition extending to all edges.
+CRITICAL AVOIDANCE: If the visual direction mentions leaving space for a picture/image (e.g., "leave the right side empty", "leave space in the middle"), you MUST NOT generate any text, graphics, or complex visual elements in that specific area. Leave it as a solid color or a very simple, clean gradient background so a real image can be pasted over it later."""
 
     try:
         resp = chat_completion_with_fallback(
@@ -410,6 +547,8 @@ def derive_technical_plan(
         tc = page.get("text_content", {}).copy()
         table_data = tc.get("table_data")
 
+        native_images = page.get("native_images", [])
+
         slide = {
             "page_num": pnum,
             "section_title": page.get("section_title", ""),
@@ -435,7 +574,10 @@ def derive_technical_plan(
             )
             slide["visual_prompt"] = vp
             slide["reference_image"] = None
-
+            
+        if native_images:
+            slide["native_images"] = native_images
+            
         slides.append(slide)
         logger.info(f"  P{pnum} [{ptype}] visual_prompt 已生成")
 
@@ -444,7 +586,7 @@ def derive_technical_plan(
         "page_num": len(slides) + 1,
         "type": "background_only",
         "title": "Pure Background",
-        "visual_prompt": "Clean gradient background matching the presentation style. No text, no logos.",
+        "visual_prompt": f"A clean, minimal, empty 16:9 background matching the {style_config['description']} style. Use the same color palette: {', '.join(style_config.get('palette', []))}. DO NOT generate any text, typography, logos, charts, or complex structural elements. It must be a pure, elegant gradient or subtle textured background suitable for placing new content on top.",
         "reference_image": None,
         "style_config": style_config,
     })

@@ -81,15 +81,17 @@ def _generate_single_slide(slide, visual_plan, slides_dir, generator, resolution
 
     is_background_only = slide.get('type') == 'background_only'
     
-    native_image_config = slide.get('native_image', {})
-    native_layout = native_image_config.get('layout')
+    native_images = slide.get('native_images', [])
+    # Legacy fallback mapping
+    if not native_images and slide.get('native_image'):
+        native_images = [slide.get('native_image')]
     
     image = generator.generate_image(
         prompt, aspect_ratio="16:9",
         reference_images=reference_images,
         is_background_only=is_background_only,
         resolution=resolution,
-        native_layout=native_layout
+        native_images=native_images
     )
     page_num = slide['page_num']
     slide_path = slides_dir / f"slide_{page_num:02d}.png"
@@ -158,8 +160,13 @@ def execute_plan(plan_file: str, output_name: str = "Final_Presentation",
         if missing:
             print(f"⚠️ 缺少图片: 第 {missing} 页，将跳过或留白")
         date_prefix = date.today().strftime("%Y%m%d")
-        output_path = proj / f"{date_prefix}_{output_name}.pptx"
-        generator.create_advanced_pptx(visual_plan, images_dict, str(output_path), template_path)
+        
+        final_output_name = output_name
+        if not final_output_name.startswith(f"{date_prefix}_"):
+            final_output_name = f"{date_prefix}_{output_name}"
+            
+        output_path = proj / f"{final_output_name}.pptx"
+        generator.create_advanced_pptx(visual_plan, images_dict, str(output_path), template_path, project_dir=str(proj))
         print(f"\n✅ PPT 重新组装完成: {output_path}")
         return str(output_path)
     
@@ -314,9 +321,16 @@ def execute_plan(plan_file: str, output_name: str = "Final_Presentation",
                 except Exception as e:
                     logger.error(f"Page {s['page_num']} 异常: {e}")
 
+    # Get the project name, output name usually already has the date prefix
+    # If output_name starts with the date prefix, don't add it again
     date_prefix = date.today().strftime("%Y%m%d")
-    output_path = proj / f"{date_prefix}_{output_name}.pptx"
-    generator.create_advanced_pptx(visual_plan, images_dict, str(output_path), template_path)
+    
+    final_output_name = output_name
+    if not final_output_name.startswith(f"{date_prefix}_"):
+        final_output_name = f"{date_prefix}_{output_name}"
+        
+    output_path = proj / f"{final_output_name}.pptx"
+    generator.create_advanced_pptx(visual_plan, images_dict, str(output_path), template_path, project_dir=str(proj))
 
     print(f"\n✅ PPT 生成完成: {output_path}")
     return str(output_path)
