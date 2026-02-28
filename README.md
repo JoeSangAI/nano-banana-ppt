@@ -62,6 +62,13 @@ python -m nano_banana_ppt.utils.regenerate "output.pptx" "ppt_generation_plan.js
 
 请查看 [CHANGELOG.md](./CHANGELOG.md) 以获取完整的历史更新记录。
 
+### [v2.3.0] - 2026-03-01
+*   🚀 **原生图片语义排版 (VLM Semantic Layout)**: 引入强悍的多模态排版系统。利用 `gemini-3.1-pro-preview` 的视觉能力，在 AI 生成 PPT 背景后，让大模型“睁眼”寻找完美的留白安全区。
+*   🚀 **完美比例与贴边对齐**: 原生图片插入时强制遵循原始长宽比 (`object-fit: contain` 逻辑)，并根据 VLM 计算的留白框自动进行视觉重心对齐（如左贴边、右贴边、完美居中），拒绝强行拉伸和错位。
+*   🚀 **自动网络图片兜底**: 解析器新增对 `http/https` 图片链接的自动下载和本地路径映射支持，并自动修复 `WebP` 格式（无损转 PNG）以兼容微软 Office 引擎。
+*   🚀 **母版背景储备页增强**: 最终生成的纯净背景页将严格提取并继承整套 PPT 的核心色彩配置 (`palette`) 与材质隐喻，实现无缝的临时加页支持。
+*   🛠 **人类可读审核流优化**: 简化 `plan_for_review.md` 的呈现结构，移除冗余的技术元数据，原生图片预览直接采用内联 HTML 小图渲染，提升主讲人审阅体验。
+
 ### [v2.2.0] - 2026-02-28
 *   🚀 **模型底座全面升级**: 代理与生图全线升级至 `gemini-3.1-pro-preview` 与 `gemini-3.1-flash-image-preview`。
 *   🚀 **强化叙事提取蓝图**: 深度规划演讲节奏与情绪，支持 Briefing 意图注入，改善排版分布。
