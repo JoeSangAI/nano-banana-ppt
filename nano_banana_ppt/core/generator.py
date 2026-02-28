@@ -53,7 +53,7 @@ class PPTGenerator:
         self.output_dir = Path(slides_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
     
-    def generate_image(self, description: str, aspect_ratio: str = "16:9", reference_images: List[Image.Image] = None, is_background_only: bool = False, resolution: str = "1K") -> Image.Image:
+    def generate_image(self, description: str, aspect_ratio: str = "16:9", reference_images: List[Image.Image] = None, is_background_only: bool = False, resolution: str = "1K", native_layout: str = None) -> Image.Image:
         """
         生成单页PPT图片
         使用 Google REST API 直接调用（兼容 nano banana）
@@ -71,6 +71,18 @@ class PPTGenerator:
 
         # VisualAgent 已构造完整 prompt，此处仅追加分辨率等技术参数
         tech_suffix = f"\n\nTechnical: aspect ratio {aspect_ratio}, {resolution} resolution, sharp text rendering. CRITICAL: No black blocks, no solid black rectangles, seamless full-bleed composition."
+        
+        # Inject smart whitespace instructions based on native_layout
+        if native_layout:
+            layout_prompts = {
+                "right_half": "CRITICAL: The right half of the image MUST be left extremely clean, empty, or plain solid color to accommodate an overlaid photo.",
+                "left_half": "CRITICAL: The left half of the image MUST be left extremely clean, empty, or plain solid color to accommodate an overlaid photo.",
+                "center": "CRITICAL: The center area of the image MUST be left extremely clean, empty, or plain solid color to accommodate an overlaid photo.",
+                "bottom_right": "CRITICAL: The bottom right corner of the image MUST be left extremely clean, empty, or plain solid color to accommodate an overlaid photo."
+            }
+            if native_layout in layout_prompts:
+                tech_suffix += f" {layout_prompts[native_layout]}"
+
         full_prompt = description + tech_suffix
 
         # 使用 Google REST API 直接调用
@@ -354,7 +366,7 @@ class PPTGenerator:
                 self._add_native_table(slide, table_data, style_config, prs)
             elif img:
                 # 图表/普通页：添加背景图
-                temp_path = self.output_dir / f"temp_slide_{i}.png"
+                temp_path = self.output_dir / f"temp_slide_{page_num:02d}.png"
                 img.save(temp_path, "PNG")
                 slide.shapes.add_picture(str(temp_path), 0, 0, prs.slide_width, prs.slide_height)
 
@@ -385,6 +397,58 @@ class PPTGenerator:
                     ly = margin_y
 
                 slide.shapes.add_picture(logo_path, lx, ly, logo_w, logo_h)
+
+            # --- NEW: Add Native Image ---
+            native_image_config = slide_plan.get('native_image')
+            if native_image_config:
+                img_path = native_image_config.get('path')
+                layout = native_image_config.get('layout', 'center')
+                
+                if img_path and os.path.exists(img_path):
+                    try:
+                        from PIL import Image as PILImage
+                        native_img = PILImage.open(img_path)
+                        img_w, img_h = native_img.size
+                        aspect = img_w / img_h
+                        
+                        sw = prs.slide_width
+                        sh = prs.slide_height
+                        
+                        margin = Inches(0.5)
+                        
+                        # Define target bounding box (left, top, max_width, max_height)
+                        if layout == 'right_half':
+                            box = (sw / 2 + margin/2, margin, sw / 2 - margin*1.5, sh - margin*2)
+                        elif layout == 'left_half':
+                            box = (margin, margin, sw / 2 - margin*1.5, sh - margin*2)
+                        elif layout == 'bottom_right':
+                            box = (sw * 0.6, sh * 0.5, sw * 0.4 - margin, sh * 0.5 - margin)
+                        elif layout == 'fullscreen':
+                            box = (0, 0, sw, sh)
+                        else: # center
+                            box = (margin*2, margin*2, sw - margin*4, sh - margin*4)
+                            
+                        target_l, target_t, max_w, max_h = box
+                        
+                        # Calculate fitted dimensions preserving aspect ratio
+                        target_aspect = max_w / max_h
+                        if aspect > target_aspect:
+                            # Image is wider than target box
+                            final_w = max_w
+                            final_h = max_w / aspect
+                        else:
+                            # Image is taller than target box
+                            final_h = max_h
+                            final_w = max_h * aspect
+                            
+                        # Center within the target box
+                        final_l = target_l + (max_w - final_w) / 2
+                        final_t = target_t + (max_h - final_h) / 2
+                        
+                        slide.shapes.add_picture(img_path, final_l, final_t, final_w, final_h)
+                        logger.info(f"  已插入原生图片 ({layout})")
+                    except Exception as e:
+                        logger.warning(f"无法插入原生图片 {img_path}: {e}")
 
             # 添加演讲者备注 (Speaker Notes)
             speaker_notes = slide_plan.get('speaker_notes')

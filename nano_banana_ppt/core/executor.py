@@ -80,11 +80,16 @@ def _generate_single_slide(slide, visual_plan, slides_dir, generator, resolution
             reference_images = [master_img]
 
     is_background_only = slide.get('type') == 'background_only'
+    
+    native_image_config = slide.get('native_image', {})
+    native_layout = native_image_config.get('layout')
+    
     image = generator.generate_image(
         prompt, aspect_ratio="16:9",
         reference_images=reference_images,
         is_background_only=is_background_only,
         resolution=resolution,
+        native_layout=native_layout
     )
     page_num = slide['page_num']
     slide_path = slides_dir / f"slide_{page_num:02d}.png"
@@ -274,8 +279,9 @@ def execute_plan(plan_file: str, output_name: str = "Final_Presentation",
                 indices_to_remove.append(idx) # Still remove to avoid infinite loop or errors
 
         # Remove processed seeds from to_run (in reverse order to preserve indices)
-        for idx in sorted(indices_to_remove, reverse=True):
-            to_run.pop(idx)
+        # BUG FIX: Popping from to_run modifies it while we still need to process remaining items.
+        # Instead of popping, we just create a new list for remaining items.
+        to_run = [s for i, s in enumerate(to_run) if i not in indices_to_remove]
 
     # Phase 2: 并行生成剩余页
     def run_one(s):
