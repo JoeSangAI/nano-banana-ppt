@@ -32,42 +32,44 @@ def _generate_single_slide(slide, visual_plan, slides_dir, generator, resolution
     table_data = slide.get('table_data') or slide.get('text_content', {}).get('table_data')
     visualization = slide.get('visualization', '')
     
-    if table_data:
-        # 混合策略：表格用原生 PPT 表格（不渲染图）；图表用图片
-        if visualization in ('bar', 'line', 'pie'):
-            try:
-                bg_img = clean_background_image if clean_background_image else None
-                image = render_chart_image(table_data, visualization, slide.get('style_config', {}), background_image=bg_img)
-                page_num = slide['page_num']
-                slide_path = slides_dir / f"slide_{page_num:02d}.png"
-                image.save(slide_path, "PNG")
-                return page_num, image
-            except Exception as e:
-                logger.error(f"Failed to render chart for slide {slide.get('page_num')}: {e}")
-                raise e
-        else:
-            # 表格页：跳过渲染，generator 将插入原生 PPT 表格
+    if table_data and visualization in ('bar', 'line', 'pie'):
+        try:
+            bg_img = clean_background_image if clean_background_image else None
+            image = render_chart_image(table_data, visualization, slide.get('style_config', {}), background_image=bg_img)
             page_num = slide['page_num']
-            logger.info(f"  📋 Table slide P{page_num}: 使用原生 PPT 表格（可编辑）")
-            # 不写入 images_dict，generator 检测到 table_data + 无图 时会插入原生表格
-            return page_num, None
+            slide_path = slides_dir / f"slide_{page_num:02d}.png"
+            image.save(slide_path, "PNG")
+            return page_num, image
+        except Exception as e:
+            logger.error(f"Failed to render chart for slide {slide.get('page_num')}: {e}")
+            raise e
 
     prompt = slide['visual_prompt']
     reference_images = []
 
-    # 1. 尝试加载显式指定的模版参考图
-    if slide.get('reference_image') and os.path.exists(slide['reference_image']):
-        try:
-            ref_img = Image.open(slide['reference_image'])
-            reference_images = [ref_img]
-        except Exception as e:
-            logger.warning(f"无法加载参考图: {e}")
+    # 1. 尝试加载显式指定的模版参考图（支持单张或多张）
+    ref_imgs_paths = slide.get('reference_images', [])
+    if slide.get('reference_image'):
+        if isinstance(slide['reference_image'], list):
+            ref_imgs_paths.extend(slide['reference_image'])
+        else:
+            ref_imgs_paths.append(slide['reference_image'])
+            
+    for ref_path in ref_imgs_paths:
+        if ref_path and os.path.exists(ref_path):
+            try:
+                ref_img = Image.open(ref_path)
+                reference_images.append(ref_img)
+            except Exception as e:
+                logger.warning(f"无法加载参考图 {ref_path}: {e}")
 
     # 2. 如果没有模版参考图，尝试使用同类型的母版 (AI Minting Consistency)
+    # framework/flowchart/comparison/data/toc/breathing 均属于「内容信息页」，
+    # 共享 content 母版，确保整套 PPT 视觉语言统一
     if not reference_images:
         p_type = slide.get('type')
-        # Map page types to master keys
-        if p_type == 'content':
+        CONTENT_FAMILY = {'content', 'framework', 'flowchart', 'comparison', 'data', 'toc', 'breathing'}
+        if p_type in CONTENT_FAMILY:
             master_img = masters.get('content')
         elif p_type == 'section':
             master_img = masters.get('section')
@@ -156,7 +158,7 @@ def execute_plan(plan_file: str, output_name: str = "Final_Presentation",
                     images_dict[pn] = img
                 except Exception as e:
                     logger.warning(f"无法加载 {path}: {e}")
-        missing = [s['page_num'] for s in visual_plan if s['page_num'] not in images_dict and not (s.get('table_data') or s.get('text_content', {}).get('table_data'))]
+        missing = [s['page_num'] for s in visual_plan if s['page_num'] not in images_dict]
         if missing:
             print(f"⚠️ 缺少图片: 第 {missing} 页，将跳过或留白")
         date_prefix = date.today().strftime("%Y%m%d")

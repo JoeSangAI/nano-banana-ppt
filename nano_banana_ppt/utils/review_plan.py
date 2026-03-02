@@ -62,7 +62,6 @@ def build_review_md(
         "hero": "金句",
         "breathing": "呼吸",
         "toc": "目录",
-        "table": "表格",
         "data": "数据",
         "flowchart": "流程",
         "framework": "框架",
@@ -181,16 +180,14 @@ def parse_review_md(md_text: str) -> Dict[str, Any]:
     """
     pages = []
     current_page = None
-    in_table = False
-    table_rows = []
-    table_headers = None
 
-    # 提取整体设计（简单正则）
-    content_match = re.search(r"\|\s*内容源\s*\|\s*(.+?)\s*\|", md_text)
-    template_match = re.search(r"\|\s*模板\s*\|\s*(.+?)\s*\|", md_text)
-    palette_match = re.search(r"\|\s*配色\s*\|\s*(.+?)\s*\|", md_text)
-    logo_match = re.search(r"\|\s*Logo\s*\|\s*(.+?)\s*\|", md_text)
-    style_match = re.search(r"\|\s*风格\s*\|\s*(.+?)\s*\|", md_text)
+    # 提取整体设计（处理可能包含<br>的情况）
+    content_match = re.search(r"\|\s*(?:<br>)?内容源\s*\|\s*(?:<br>)?(.+?)\s*\|", md_text)
+    template_match = re.search(r"\|\s*(?:<br>)?模板\s*\|\s*(?:<br>)?(.+?)\s*\|", md_text)
+    palette_match = re.search(r"\|\s*(?:<br>)?配色\s*\|\s*(?:<br>)?(.+?)\s*\|", md_text)
+    logo_match = re.search(r"\|\s*(?:<br>)?Logo\s*\|\s*(?:<br>)?(.+?)\s*\|", md_text)
+    fonts_match = re.search(r"\|\s*(?:<br>)?字体\s*\|\s*(?:<br>)?(.+?)\s*\|", md_text)
+    style_match = re.search(r"\|\s*(?:<br>)?风格\s*\|\s*(?:<br>)?(.+?)\s*\|", md_text)
 
     meta = {
         "content_file": content_match.group(1).strip() if content_match else "",
@@ -202,8 +199,16 @@ def parse_review_md(md_text: str) -> Dict[str, Any]:
     if meta.get("logo_file") == "未使用":
         meta["logo_file"] = None
 
+    # 解析字体列表
+    fonts = []
+    if fonts_match:
+        fstr = fonts_match.group(1).strip()
+        if fstr and fstr not in ("（自动）", "自动"):
+            fonts = [f.strip() for f in fstr.split(",") if f.strip()]
+
     style = {
         "palette": [],
+        "fonts": fonts,
         "description": style_match.group(1).strip() if style_match else "",
     }
     if palette_match:
@@ -216,7 +221,7 @@ def parse_review_md(md_text: str) -> Dict[str, Any]:
     # 按页解析：匹配 ### 第 N 页 · 类型 及其后内容块
     type_map = {
         "封面": "cover", "章节": "section", "内容": "content",
-        "金句": "hero", "呼吸": "breathing", "目录": "toc", "表格": "table",
+        "金句": "hero", "呼吸": "breathing", "目录": "toc",
         "数据": "data", "流程": "flowchart", "框架": "framework",
         "对比": "comparison", "封底": "ending",
     }
@@ -252,26 +257,26 @@ def parse_review_md(md_text: str) -> Dict[str, Any]:
         
         for raw_line in block.split("\n"):
             line = raw_line.rstrip()
-            if re.match(r"^-\s*\*\*标题\*\*[：:]\s*", line):
-                headline = re.sub(r"^-\s*\*\*标题\*\*[：:]\s*", "", line).strip()
+            if re.match(r"^-\s*\*\*标题\*\*\s*[：:]\s*", line):
+                headline = re.sub(r"^-\s*\*\*标题\*\*\s*[：:]\s*", "", line).strip()
                 in_native_images = False
-            elif re.match(r"^-\s*\*\*副标题\*\*[：:]\s*", line):
-                subhead = re.sub(r"^-\s*\*\*副标题\*\*[：:]\s*", "", line).strip()
+            elif re.match(r"^-\s*\*\*副标题\*\*\s*[：:]\s*", line):
+                subhead = re.sub(r"^-\s*\*\*副标题\*\*\s*[：:]\s*", "", line).strip()
                 in_native_images = False
             # 这些字段已在写入时被注释掉，但为了向后兼容解析，仍保留
-            elif re.match(r"^-\s*\*\*叙事角色\*\*[：:]\s*", line):
-                narrative_role = re.sub(r"^-\s*\*\*叙事角色\*\*[：:]\s*", "", line).strip()
+            elif re.match(r"^-\s*\*\*叙事角色\*\*\s*[：:]\s*", line):
+                narrative_role = re.sub(r"^-\s*\*\*叙事角色\*\*\s*[：:]\s*", "", line).strip()
                 in_native_images = False
-            elif re.match(r"^-\s*\*\*本页收获\*\*[：:]\s*", line):
-                one_takeaway = re.sub(r"^-\s*\*\*本页收获\*\*[：:]\s*", "", line).strip()
+            elif re.match(r"^-\s*\*\*本页收获\*\*\s*[：:]\s*", line):
+                one_takeaway = re.sub(r"^-\s*\*\*本页收获\*\*\s*[：:]\s*", "", line).strip()
                 in_native_images = False
-            elif re.match(r"^-\s*\*\*抬机率\*\*[：:]\s*", line):
-                lift_rate = re.sub(r"^-\s*\*\*抬机率\*\*[：:]\s*", "", line).strip()
+            elif re.match(r"^-\s*\*\*抬机率\*\*\s*[：:]\s*", line):
+                lift_rate = re.sub(r"^-\s*\*\*抬机率\*\*\s*[：:]\s*", "", line).strip()
                 in_native_images = False
-            elif re.match(r"^-\s*\*\*正文形态\*\*[：:]\s*", line):
-                body_format = re.sub(r"^-\s*\*\*正文形态\*\*[：:]\s*", "", line).strip()
+            elif re.match(r"^-\s*\*\*正文形态\*\*\s*[：:]\s*", line):
+                body_format = re.sub(r"^-\s*\*\*正文形态\*\*\s*[：:]\s*", "", line).strip()
                 in_native_images = False
-            elif line.strip() == "- **正文**：" or line.strip() == "- **正文**: ":
+            elif re.match(r"^-\s*\*\*正文\*\*\s*[：:]\s*", line) or line.strip() == "- **正文**：" or line.strip() == "- **正文**: ":
                 in_body = True
                 in_notes = False
                 in_native_images = False
@@ -283,8 +288,12 @@ def parse_review_md(md_text: str) -> Dict[str, Any]:
                 in_body = False
                 in_notes = False
                 in_native_images = True
-            elif in_body and re.match(r"^\s+-\s+", line) and "**" not in line[:20]:
-                body.append(re.sub(r"^\s+-\s+", "", line).strip())
+            elif in_body and re.match(r"^\s+-\s+", line):
+                # 移除开头的空格和短横线，如果遇到粗体，保留粗体文本内容
+                cleaned_line = re.sub(r"^\s+-\s+", "", line).strip()
+                # 也可以直接把粗体星号替换掉
+                cleaned_line = cleaned_line.replace("**", "")
+                body.append(cleaned_line)
             elif in_body and re.match(r"^\s{2,}\S", line) and body_format in ("paragraph", "quote", "data", "mixed") and not line.strip().startswith("-"):
                 body.append(line.strip())
             elif in_notes and re.match(r"^\s*>\s+", line):
@@ -375,11 +384,11 @@ def parse_review_md(md_text: str) -> Dict[str, Any]:
                         table_data = {"headers": cells, "rows": []}
                     else:
                         table_data["rows"].append(cells)
-            elif re.match(r"^-\s*\*\*配图/画面\*\*[：:]\s*", line):
+            elif re.match(r"^-\s*\*\*配图/画面\*\*\s*[：:]\s*", line):
                 in_body = False
                 in_notes = False
                 in_native_images = False
-                visual_suggestion = re.sub(r"^-\s*\*\*配图/画面\*\*[：:]\s*", "", line).strip()
+                visual_suggestion = re.sub(r"^-\s*\*\*配图/画面\*\*\s*[：:]\s*", "", line).strip()
             elif line.strip() != "":
                 # If we are not in notes or body, don't clear flags for empty lines, but clear for other markers
                 pass
@@ -421,6 +430,7 @@ def _generate_visual_prompt_for_page(
     design_system: str,
     client,
     model_fallback: List[str],
+    outline_summary: str = "",
 ) -> str:
     """对单页调用 LLM 生成 visual_prompt"""
     from .llm_client import chat_completion_with_fallback
@@ -432,32 +442,32 @@ def _generate_visual_prompt_for_page(
     body = list(dict.fromkeys(tc.get("body") or []))  # 去重，防止 AI 生图时渲染重复项
     visual_suggestion = page.get("visual_suggestion", "")
 
-    palette = style_config.get("palette", [])
-    if len(palette) >= 2:
-        color_constraint = f"Palette: {', '.join(palette[:3])}"
-    else:
-        color_constraint = ""
-
     type_instructions = {
-        "cover": "【COVER】Full-screen immersive. Title massive and centered. High-impact visual anchor.",
-        "section": "【SECTION】Minimalist chapter divider. Section title as sole focus.",
-        "hero": "【HERO】Massive typography for core message. Strong visual impact.",
-        "content": "【CONTENT】Structured information. Bento grids. Balance text with visual.",
-        "flowchart": "【FLOWCHART】Process diagram. Left-to-right or top-to-bottom flow with clear nodes and arrows. Each body item is a step/node. Input→Process→Output style. Professional flowchart aesthetic.",
-        "framework": "【FRAMEWORK】Hierarchy or pyramid diagram. Layered structure (e.g. 1+N+X). Each layer clearly labeled. Modern consulting-style framework visualization.",
-        "comparison": "【COMPARISON】Contrast diagram. Two trends or forces (e.g. Attention↘ vs Content↗). Crossing curves or side-by-side comparison. Clear visual contrast.",
+        "cover": "【COVER】Full-screen immersive. Title massive and centered. High-impact visual anchor. Use a symbolic, high-end 3D object or cinematic scene as the main visual anchor.",
+        "section": "【SECTION】Minimalist chapter divider. Section title as sole focus. Create a sense of 'pause' or 'new chapter'.",
+        "hero": "【HERO】Massive typography for core message. Strong visual impact. Typography (Font, Weight, Positioning) MUST match the global style exactly.",
+        "content": "【CONTENT】Structured information. Bento grids. Balance text with visual. Ensure body text is legible.",
+        "toc": "【TOC】Structured and clean grid or list layout. Use icons or large numbers for each chapter.",
+        "data": "【DATA】Focus on the chart/number. Make key numbers huge. Sleek, modern data visualization.",
+        "flowchart": "【FLOWCHART】Process or progression. Use abstract, balanced layouts that imply flow without relying on rigid literal arrows. Avoid generic templates.",
+        "framework": "【FRAMEWORK】Logical structure or model. Use sleek, modern, abstract structural compositions. DO NOT force literal pyramids or rigid hierarchies unless explicitly requested.",
+        "comparison": "【COMPARISON】Contrast or juxtaposition. Use balanced, side-by-side or contrasting abstract elements. Avoid overly literal or cluttered intersecting curves.",
         "ending": "【ENDING】Simple, memorable. Clean background, centered text.",
+        "breathing": "【BREATHING】Extreme minimalism. A single question, number, or half-screen whitespace with a transition phrase.",
     }
     type_inst = type_instructions.get(ptype, "【CONTENT】Structured slide.")
 
     body_text = "\n".join(f"Text {i+1}: \"{b.lstrip('-•* ').strip()}\"" for i, b in enumerate(body[:6])) if body else ""
 
+    global_context_block = f"""【Global Deck Context — for visual consistency across ALL slides】
+{outline_summary}
+""" if outline_summary else ""
+
     prompt = f"""Generate a detailed image-generation prompt for a PPT slide (16:9, for Gemini/Nano Banana 2).
 
 {design_system}
-{color_constraint}
 
-Page type: {ptype.upper()}
+{global_context_block}Page type: {ptype.upper()}
 Instruction: {type_inst}
 
 Text to display (render exactly, do not translate Chinese):
@@ -467,7 +477,14 @@ Text to display (render exactly, do not translate Chinese):
 
 Visual/imagery direction from human: {visual_suggestion}
 
-Output: A single, detailed English prompt string for image generation. No explanation. Include: background, layout, typography placement. CRITICAL: Render each body item EXACTLY ONCE (no duplicates). You may use subtle list markers (like small dots) ONLY if formatting a list of multiple small points; otherwise, do not use bullet points for diagrams or frameworks. CRITICAL negative constraints: no logos, no watermarks, NO black blocks, NO solid black rectangles, NO empty black corners - use seamless full-bleed composition extending to all edges.
+If the human provides a specific `Visual/imagery direction`, it takes ABSOLUTE HIGHEST PRIORITY. You MUST follow their visual direction rather than defaulting to generic flowchart, pyramid, or comparison templates.
+
+Output: A single, detailed English prompt string for image generation. No explanation. Include: background, layout, typography placement.
+CRITICAL consistency rules:
+- This slide is PART OF A DECK. Its background color, font style, shape language, and decorative elements MUST be visually identical to the design system above. Do NOT deviate.
+- Render each body item EXACTLY ONCE (no duplicates).
+- You may use subtle list markers (like small dots) ONLY if formatting a list of multiple small points; otherwise, do not use bullet points for diagrams or frameworks.
+- No logos, no watermarks, NO black blocks, NO solid black rectangles, NO empty black corners — use seamless full-bleed composition extending to all edges.
 CRITICAL AVOIDANCE: If the visual direction mentions leaving space for a picture/image (e.g., "leave the right side empty", "leave space in the middle"), you MUST NOT generate any text, graphics, or complex visual elements in that specific area. Leave it as a solid color or a very simple, clean gradient background so a real image can be pasted over it later."""
 
     try:
@@ -520,12 +537,33 @@ def derive_technical_plan(
     if not meta.get("logo_file"):
         meta["logo_file"] = None
 
+    fonts = style.get("fonts", [])
     style_config = {
         "description": style.get("description", "Professional presentation"),
         "palette": style.get("palette", ["#1a1a2e", "#16213e", "#0f3460"]),
+        "fonts": fonts,
         "mode": "ai_minting",
     }
-    design_system = f"Global Style: {style_config['description']}. Palette: {', '.join(style_config.get('palette', []))}."
+    palette = style_config.get("palette", [])
+    if len(palette) >= 2:
+        color_constraint = (
+            f"Background base: {palette[0]}/{palette[1]}, "
+            f"Title color: {palette[2] if len(palette) > 2 else '#FFFFFF'}, "
+            f"Body text: {palette[3] if len(palette) > 3 else '#FFFFFF'}"
+        )
+    elif palette:
+        color_constraint = f"Palette: {', '.join(palette)}"
+    else:
+        color_constraint = ""
+    fonts_constraint = f"Fonts: {', '.join(fonts)}." if fonts else ""
+    design_system = (
+        f"【Visual Design System (STRICT)】\n"
+        f"1. **Global Style**: {style_config['description']}\n"
+        f"2. **Color Palette (MANDATORY)**: {color_constraint}\n"
+        f"{f'3. **Typography**: {fonts_constraint}' if fonts_constraint else ''}\n"
+        f"4. **Consistency (CRITICAL)**: ALL slides MUST use the exact same fonts, colors, shape language, and decorative elements. "
+        f"Every slide must look like it belongs to the same deck — same visual vocabulary, same color scheme."
+    )
 
     layout_map = {
         "cover": "full_screen_immersive",
@@ -537,8 +575,15 @@ def derive_technical_plan(
         "framework": "framework_diagram",
         "comparison": "comparison_diagram",
         "ending": "centered_headline",
-        "table": "table_dominant",
     }
+
+    # 生成全局大纲摘要，用于给每页的 visual prompt 提供整体一致性上下文
+    outline_summary = "\n".join([
+        f"- P{p['page_num']} ({p.get('type','content')}): {p.get('text_content', {}).get('headline', '')}"
+        for p in pages[:12]
+    ])
+    if len(pages) > 12:
+        outline_summary += "\n... (more slides)"
 
     slides = []
     for i, page in enumerate(pages):
@@ -563,14 +608,17 @@ def derive_technical_plan(
         if page.get("speaker_notes"):
             slide["speaker_notes"] = page["speaker_notes"]
 
-        if table_data:
+        if table_data and page.get("visualization", "") in ("bar", "line", "pie"):
             slide["table_data"] = table_data
-            slide["visualization"] = "table"
+            slide["visualization"] = page.get("visualization", "")
             slide["visual_prompt"] = "DATA_VISUALIZATION_PLACEHOLDER"
             slide["use_data_visualizer"] = True
         else:
+            if table_data:
+                slide["table_data"] = table_data
             vp = _generate_visual_prompt_for_page(
-                page, style_config, design_system, client, model_fallback
+                page, style_config, design_system, client, model_fallback,
+                outline_summary=outline_summary,
             )
             slide["visual_prompt"] = vp
             slide["reference_image"] = None

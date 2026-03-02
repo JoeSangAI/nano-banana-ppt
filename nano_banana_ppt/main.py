@@ -226,7 +226,13 @@ def _resolve_execute_input(path_arg: str) -> tuple:
         print(f"❌ 目录中未找到 {REVIEW_MD_FILENAME} 或 plan.json")
         return None, None, False
     if p.suffix.lower() == ".md":
-        return str(p), str(p.parent), True
+        name = Path(p).stem
+        from datetime import date
+        date_prefix = date.today().strftime("%Y%m%d")
+        dir_name = f"{date_prefix}_{name}"
+        project_dir = Path("output") / "ppt" / dir_name
+        project_dir.mkdir(parents=True, exist_ok=True)
+        return str(p), str(project_dir), True
     if p.suffix.lower() == ".json":
         return str(p), str(p.parent), False
     print("❌ 请传入 plan_for_review.md、plan.json 或项目目录")
@@ -384,6 +390,81 @@ def auto_generate_ppt(content_file: str, template_file: str = None,
     _interactive_rerun_prompt(plan_file, out_name, resolution, project_dir=proj_dir)
 
 
+def execute_upscale(proj_dir: str, resolution: str, slide_filter: list = None):
+    """独立的高保真放大流程"""
+    if not os.path.exists(proj_dir):
+        print(f"❌ 项目目录不存在: {proj_dir}")
+        return False
+
+    resolution = (resolution or "4K").upper()
+    if resolution not in ("2K", "4K"):
+        print(f"❌ Upscale 分辨率参数错误 ({resolution})，仅支持 2K 或 4K。")
+        return False
+
+    print(f"\n🔍 开始执行高保真 Upscale 放大流程...")
+    print(f"📁 项目目录: {proj_dir}")
+    print(f"🖼️ 目标分辨率: {resolution}")
+    if slide_filter:
+        print(f"📑 仅放大指定页面: {slide_filter}")
+        
+    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    api_base = os.getenv("OPENAI_API_BASE")
+    if not api_key:
+        print("❌ 未设置 OPENAI_API_KEY 或 GOOGLE_API_KEY")
+        return False
+
+    from nano_banana_ppt.core.generator import PPTGenerator
+    generator = PPTGenerator(api_key=api_key, api_base=api_base, slides_dir=proj_dir)
+    
+    slides_dir = Path(proj_dir) / "slides"
+    if not slides_dir.exists():
+        # 兼容旧版本可能直接生成在根目录的情况
+        slides_dir = Path(proj_dir)
+        
+    # 查找背景图片
+    bg_files = list(slides_dir.glob("slide_*.png")) + list(slides_dir.glob("slide_*.jpg"))
+    if not bg_files:
+        print(f"❌ 在项目目录中未找到任何图片 (slide_*.png/jpg)")
+        return False
+        
+    # 按照页码排序
+    bg_files.sort()
+    
+    success_count = 0
+    total_count = 0
+    
+    for bg_file in bg_files:
+        # 从文件名提取页码 (如 slide_01.png -> 1)
+        try:
+            filename = bg_file.stem
+            page_num_str = filename.replace("slide_", "")
+            page_num = int(page_num_str)
+        except ValueError:
+            continue
+            
+        # 过滤页码
+        if slide_filter and page_num not in slide_filter:
+            continue
+            
+        total_count += 1
+        print(f"[{page_num}] 正在放大: {bg_file.name} ...")
+        
+        success = generator.upscale_image(str(bg_file), resolution=resolution)
+        if success:
+            success_count += 1
+            
+    print(f"\n✅ Upscale 图片放大完成! 成功/总数: {success_count}/{total_count}")
+    
+    if success_count > 0:
+        print("\n🔨 正在使用高清图片重新组装 PPTX...")
+        output_name = Path(proj_dir).name
+        # 复用已有的 execute_from_plan 的组装逻辑
+        # 传递 proj_dir 作为 plan_input，设置 reassemble_only=True
+        execute_from_plan(proj_dir, output_name, resolution=resolution, slide_filter=slide_filter, reassemble_only=True)
+        print("🎉 高清 PPTX 组装完成!")
+        
+    return True
+
 # ──────────────────────────────────────────────
 #  CLI 入口
 # ──────────────────────────────────────────────
@@ -399,6 +480,9 @@ Nano Banana 2 PPT Generator
   # Phase 2: 执行计划（生图 + 组装 PPTX）
   # 可传入项目目录、plan_for_review.md 或 plan.json
   python -m nano_banana_ppt.main execute <项目目录或plan文件> [output_name] [--resolution 1K|2K|4K] [--slides 3 5 7] [--reassemble]
+
+  # Upscale: 后置高保真放大 (1K -> 2K/4K)
+  python -m nano_banana_ppt.main upscale <项目目录> [--resolution 2K|4K] [--slides 3 5 7]
 
   # 一键全自动（交互式终端下可用）
   python -m nano_banana_ppt.main auto <content_file> [template_file] [logo_file] [output_name] [--resolution 1K|2K|4K]
@@ -495,6 +579,21 @@ if __name__ == "__main__":
         if result and sys.stdin.isatty():
             _, proj_dir = result if isinstance(result, tuple) else (None, None)
             _interactive_rerun_prompt(pf, on or Path(pf).parent.name, resolution or "1K", project_dir=proj_dir)
+
+    elif command == "upscale":
+        if len(rest) < 2:
+            print("❌ 缺少项目目录参数")
+            sys.exit(1)
+        proj_dir = rest[1]
+        
+        # 验证输入确实是个目录
+        if not os.path.isdir(proj_dir):
+            print(f"❌ {proj_dir} 不是一个有效的目录。upscale 需要传入包含图片的 output/ppt/项目目录。")
+            sys.exit(1)
+            
+        # 默认为 4K 放大
+        target_res = resolution if resolution in ("2K", "4K") else "4K"
+        execute_upscale(proj_dir, resolution=target_res, slide_filter=slides)
 
     elif command == "auto":
         content = rest[1] if len(rest) > 1 else None

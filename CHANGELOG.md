@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v2.4.0] - 2026-03-02
+
+### 🐛 修复 (Bug Fixes)
+
+*   **风格一致性修复 (Style Consistency — Core Fix)**：识别并修复了导致字体、配色、版式在幻灯片间不统一的根本原因：
+    *   `derive_technical_plan()` 中的 `design_system` 从单行简化描述升级为结构化的「严格设计系统」指令，新增跨页一致性强制约束：*"ALL slides MUST use the exact same fonts, colors, shape language, and decorative elements."*
+    *   `parse_review_md()` 新增对 `| 字体 |` 字段的正确解析，修复了字体信息在 `plan_for_review.md` 往返中永久丢失的 bug。
+    *   `_generate_visual_prompt_for_page()` 新增 `outline_summary` 参数，每张幻灯片的 visual prompt 现在能看到整套 PPT 的全局大纲，帮助 AI 维持跨页视觉一致性。
+
+*   **Content 母版覆盖范围修复 (Master Reference Fix)**：`framework`、`flowchart`、`comparison`、`data`、`toc`、`breathing` 等信息展示类页面此前无法获取 content 母版参考图，导致它们与 content 页面视觉风格分裂。现已将这些类型全部纳入 `CONTENT_FAMILY`，统一使用 content 母版作为生成参考。
+
+*   **503 错误 Fallback 修复 (503 Fallback Fix)**：LLM 调用链 (`llm_client.py`) 此前只处理 `429`（配额耗尽），遇到 `503`（服务临时高峰）时会直接放弃切换，导致整次任务所有后续页面都降级为最简陋的 prompt。修复后：
+    *   **503（临时高峰）**：仅跳过本次调用，切换到备用模型，下次请求仍先重试主模型。
+    *   **429（配额耗尽）**：维持原有行为，整个任务内永久跳过该模型。
+
+*   **`regenerate.py` 导入路径修复**：修复了 `regenerate.py` 中错误的相对 import 路径（`nano_banana_ppt` → `nano_banana_ppt`），避免在 standalone 模式下因导入失败而崩溃。
+
 ## [v2.2.0] - 2026-02-28
 
 ### 🚀 新特性 (New Features)

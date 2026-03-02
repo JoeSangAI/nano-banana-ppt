@@ -218,6 +218,122 @@ class PPTGenerator:
         # 如果所有重试都失败
         raise Exception("图片生成失败：所有重试均失败")
     
+    def upscale_image(self, image_path: str, resolution: str = "4K") -> bool:
+        """
+        使用 Gemini API 高保真放大已有图片。
+        只放大不改变任何排版、文字、颜色或设计元素。
+        返回是否成功。
+        """
+        import requests
+        from PIL import Image
+        import io
+        import base64
+        import time
+
+        resolution = resolution.upper()
+        if resolution not in ("2K", "4K"):
+            logger.warning(f"⚠️ 分辨率参数错误 ({resolution})，不支持放大，保持原图。")
+            return False
+
+        if not os.path.exists(image_path):
+            logger.error(f"❌ 找不到图片文件: {image_path}")
+            return False
+
+        logger.info(f"正在高保真放大图片至 {resolution}: {image_path}")
+
+        prompt = (
+            f"Upscale this image to {resolution} resolution. ACT AS A HIGH-FIDELITY UPSCALER. "
+            "You must maintain all text, details, layouts, and colors exactly as they appear in the source image. "
+            "Do NOT change any words, do NOT move any text, do NOT add or remove any design elements. "
+            "Simply increase the resolution, sharpness, and clarity."
+        )
+
+        with open(image_path, "rb") as f:
+            image_bytes = f.read()
+        
+        # 兼容现有的请求组装逻辑
+        mime_type = "image/png"
+        if str(image_path).lower().endswith(('.jpg', '.jpeg')):
+            mime_type = "image/jpeg"
+            
+        b64_data = base64.b64encode(image_bytes).decode("utf-8")
+        parts = [
+            {"text": prompt},
+            {"inlineData": {"mimeType": mime_type, "data": b64_data}}
+        ]
+
+        # generationConfig
+        generation_config = {
+            "responseModalities": ["IMAGE"],
+            "imageConfig": {
+                "aspectRatio": "16:9",
+                "imageSize": resolution
+            }
+        }
+        
+        payload = {
+            "contents": [{"parts": parts}],
+            "generationConfig": generation_config,
+        }
+
+        api_key = self.client.api_key if hasattr(self.client, 'api_key') else getattr(self, '_api_key', None)
+        if not api_key:
+            logger.error("❌ 无法获取 API Key")
+            return False
+
+        api_base = self.client.base_url if hasattr(self.client, 'base_url') else "https://generativelanguage.googleapis.com/v1beta/openai"
+        # 针对 Gemini API，直接构造 REST URL (非 OpenAI 兼容 URL)
+        # 如果提供了 openai base url，提取主机名并重组
+        if "googleapis.com" in str(api_base):
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.image_model}:generateContent?key={api_key}"
+        else:
+            # 对于第三方反代，假设它是直接反代的
+            base = str(api_base).replace("/openai/v1", "").replace("/openai", "")
+            url = f"{base}/models/{self.image_model}:generateContent?key={api_key}"
+
+        headers = {"Content-Type": "application/json"}
+        
+        # 重试逻辑
+        max_retries = 5
+        base_wait = 3
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(url, headers=headers, json=payload, timeout=180)
+                if response.status_code == 200:
+                    data = response.json()
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        for part in parts:
+                            inline_data = part.get("inlineData") or part.get("inline_data")
+                            if inline_data:
+                                img_bytes = base64.b64decode(inline_data["data"])
+                                img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+                                # 覆盖保存原图
+                                img.save(image_path)
+                                logger.info(f"✅ 成功放大图片并覆盖保存: {image_path}")
+                                return True
+                    logger.error(f"❌ API返回异常数据格式: {str(data)[:200]}...")
+                elif response.status_code == 429:
+                    wait_time = base_wait * (2 ** attempt)
+                    logger.warning(f"⚠️ API 速率限制 (429)，等待 {wait_time} 秒后重试...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    logger.error(f"❌ API请求失败 ({response.status_code}): {response.text}")
+                    if attempt < max_retries - 1:
+                        wait_time = base_wait * (2 ** attempt)
+                        time.sleep(wait_time)
+                        continue
+                    break
+            except Exception as e:
+                logger.error(f"❌ 图片放大生成出错: {e}")
+                if attempt < max_retries - 1:
+                    wait_time = base_wait * (2 ** attempt)
+                    time.sleep(wait_time)
+                
+        return False
+
     def create_pptx(self, images: List[Image.Image], output_path: str) -> str:
         """
         Legacy: 将图片列表转换为 PPTX 文件 (全屏直出模式)
@@ -252,82 +368,6 @@ class PPTGenerator:
         prs.save(output_path)
         logger.info(f"PPTX文件已保存: {output_path}")
         return output_path
-
-    def _add_native_table(self, slide, table_data: Dict, style_config: Dict, prs) -> None:
-        """
-        插入原生 PPT 表格（可编辑），由 style_config 驱动样式。
-        1. 主色/背景统一  2. 标题 18-24pt、正文 14-18pt  3. 列宽按比例  4. 表头底色+加粗+行间留白
-        """
-        headers = table_data.get("headers", [])
-        rows_data = table_data.get("rows", [])
-        if not headers and not rows_data:
-            return
-
-        n_rows = 1 + len(rows_data)
-        n_cols = max(len(headers), max((len(r) for r in rows_data), default=0))
-        if n_cols == 0:
-            return
-
-        palette = style_config.get("palette", ["#f5f5f7", "#1a1a2e", "#333333"])
-        desc = (style_config.get("description") or "").lower()
-
-        def hex_to_rgb(hex_color):
-            h = str(hex_color).lstrip("#")
-            return RGBColor(int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
-
-        def _is_dark(hex_color):
-            h = str(hex_color).lstrip("#")
-            r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-            return (r * 0.299 + g * 0.587 + b * 0.114) < 128
-
-        is_dark_theme = any(k in desc for k in ["dark", "tech", "cyber"]) or (
-            len(palette) > 0 and _is_dark(palette[0])
-        )
-
-        header_bg_hex = palette[1] if len(palette) > 1 else "#333333"
-        header_text_hex = "#ffffff"
-        if is_dark_theme:
-            row_bg_odd, row_bg_even = "#1e1e2e", "#252535"
-            body_text_hex = "#e0e0e0"
-        else:
-            row_bg_odd, row_bg_even = "#ffffff", "#f8f9fa"
-            body_text_hex = palette[2] if len(palette) > 2 else "#333333"
-
-        left = Inches(0.6)
-        top = Inches(1.2)
-        width = prs.slide_width - Inches(1.2)
-        height = min(Inches(5.5), Inches(0.4) * n_rows)
-
-        table_shape = slide.shapes.add_table(n_rows, n_cols, left, top, width, height)
-        table = table_shape.table
-
-        for c in range(n_cols):
-            table.columns[c].width = width // n_cols
-
-        header_pt, body_pt = Pt(20), Pt(16)
-
-        for col in range(n_cols):
-            cell = table.cell(0, col)
-            cell.text = str(headers[col]) if col < len(headers) else ""
-            cell.fill.solid()
-            cell.fill.fore_color.rgb = hex_to_rgb(header_bg_hex)
-            for para in cell.text_frame.paragraphs:
-                para.font.bold = True
-                para.font.size = header_pt
-                para.font.color.rgb = hex_to_rgb(header_text_hex)
-
-        for r, row_vals in enumerate(rows_data):
-            bg = row_bg_even if (r + 1) % 2 == 0 else row_bg_odd
-            for c in range(n_cols):
-                cell = table.cell(r + 1, c)
-                cell.text = str(row_vals[c]) if c < len(row_vals) else ""
-                cell.fill.solid()
-                cell.fill.fore_color.rgb = hex_to_rgb(bg)
-                for para in cell.text_frame.paragraphs:
-                    para.font.size = body_pt
-                    para.font.color.rgb = hex_to_rgb(body_text_hex)
-
-        logger.info(f"  已插入原生表格 ({n_rows}×{n_cols})，可在 PPT 中直接编辑")
 
     def _calculate_dynamic_layout(self, bg_img: Image.Image, native_images: List[Dict]) -> List[Dict]:
         """Use Vision LLM to calculate perfect bounding boxes based on the actual generated background."""
@@ -455,31 +495,15 @@ Example:
             visualization = slide_plan.get('visualization', '')
 
             # 1. 对有全屏背景图的页面，一律使用 Blank 布局，避免未填充占位符显示为黑色块
-            is_native_table = table_data and visualization not in ('bar', 'line', 'pie')
-            if is_native_table:
-                layout = get_layout(prs, ['blank', 'title and content', 'content', 'chart', 'data'])
-            else:
-                # 背景图/图表页：强制 Blank 布局，消除黑色占位符
-                layout = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[0]
+            # 背景图/图表页：强制 Blank 布局，消除黑色占位符
+            layout = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[0]
 
             slide = prs.slides.add_slide(layout)
 
             page_num = slide_plan.get('page_num')
             img = images.get(page_num)
 
-            if is_native_table:
-                # 表格页：纯色背景 + 原生可编辑表格
-                palette = style_config.get("palette", ["#f5f5f7"])
-                bg_hex = palette[0] if palette else "#ffffff"
-
-                def _hex_rgb(h):
-                    h = str(h).lstrip("#")
-                    return RGBColor(int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
-
-                slide.background.fill.solid()
-                slide.background.fill.fore_color.rgb = _hex_rgb(bg_hex)
-                self._add_native_table(slide, table_data, style_config, prs)
-            elif img:
+            if img:
                 # 图表/普通页：添加背景图
                 temp_path = self.output_dir / f"temp_slide_{page_num:02d}.png"
                 img.save(temp_path, "PNG")
@@ -487,6 +511,7 @@ Example:
 
             # Add Logo as a separate, movable PPTX shape (not burned into image)
             logo_path = slide_plan.get('logo_path')
+            import os
             if logo_path and os.path.exists(logo_path) and page_type != 'background_only':
                 logo_loc = (slide_plan.get('logo_location') or 'Top-Right').lower()
                 logo_h = Inches(0.45)

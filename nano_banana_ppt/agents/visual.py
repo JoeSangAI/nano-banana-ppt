@@ -28,7 +28,6 @@ class VisualAgent:
         "big_number_data": "Large key number/metric with supporting label. High impact data visualization.",
         "split_screen_contrast": "50/50 vertical split. One side dark, one side light (or image vs text). Good for comparisons.",
         "minimalist_hero": "Extreme minimalism. Massive typography, nearly zero chrome. For 'Hero' slides.",
-        "table_dominant": "Structured table layout with clear headers and rows. Data-heavy but clean.",
         "chart_from_table": "Data visualization chart (bar/line/pie) derived from table data."
     }
 
@@ -135,7 +134,7 @@ Ensure the palette has high contrast for text reading.
             if table_data:
                 if visualization in ('bar', 'line', 'pie'):
                     return 'chart_from_table', "Data visualization chart (bar/line/pie) derived from table data."
-                return 'table_dominant', VisualAgent.LAYOUT_LIBRARY['table_dominant']
+                return 'content', VisualAgent.LAYOUT_LIBRARY['content']
 
         if page_type == 'cover':
             return 'full_screen_immersive', VisualAgent.LAYOUT_LIBRARY['full_screen_immersive']
@@ -254,7 +253,7 @@ Ensure the palette has high contrast for text reading.
             prev_layout = layout_name
 
             # Task 3: Handle table/chart pages (DataVisualizer)
-            if layout_name in ('table_dominant', 'chart_from_table'):
+            if layout_name in ('chart_from_table',):
                 logger.info(f"📊 Visual Agent: Skipping prompt gen for data page (layout={layout_name})")
                 plan_item = page.copy()
                 plan_item['visual_prompt'] = "DATA_VISUALIZATION_PLACEHOLDER"
@@ -265,10 +264,7 @@ Ensure the palette has high contrast for text reading.
                 plan_item['style_config'] = style_config
                 plan_item['use_data_visualizer'] = True
 
-                if layout_name == 'chart_from_table':
-                    plan_item['chart_type'] = page.get('visualization', 'bar')
-                else:
-                    plan_item['table_only'] = True
+                plan_item['chart_type'] = page.get('visualization', 'bar')
 
                 visual_plan.append(plan_item)
                 continue

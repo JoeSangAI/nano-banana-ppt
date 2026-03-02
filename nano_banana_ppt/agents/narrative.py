@@ -78,25 +78,6 @@ class NarrativeAgent:
         except Exception:
             return {}
 
-    def extract_markdown_tables(self, content: str) -> List[Dict]:
-        """
-        从 Markdown 内容提取表格，返回 [{"headers": [...], "rows": [[...], ...]}, ...]
-        """
-        import re
-        tables = []
-        # 匹配 | xxx | xxx | 格式
-        pattern = r'\|(.+)\|\s*\n\|[-:\s|]+\|\s*\n((?:\|.+\|\s*\n?)+)'
-        for m in re.finditer(pattern, content):
-            header_row = [c.strip() for c in m.group(1).split('|')]
-            body = m.group(2).strip().split('\n')
-            rows = [[c.strip() for c in line.split('|')[1:-1]] for line in body if line.strip()]
-            
-            # Filter out empty headers/rows if split creates empty strings at ends
-            header_row = [h for h in header_row if h]
-            
-            tables.append({"headers": header_row, "rows": rows})
-        return tables
-
     def extract_images_from_markdown(self, content: str, base_dir: str = None) -> List[str]:
         """
         从 Markdown 内容中提取图片链接
@@ -321,10 +302,13 @@ class NarrativeAgent:
    - `breathing`: 呼吸页 (轻页面：一个问句/一个数字/半屏留白+过渡语，用于消化与停顿)
    - `ending`: 封底/致谢页。**结尾优先放一句可拍照的金句**，提升「抬机率」。
 
-5. **表格、图表与原生图片排版 (Tables, Charts & Native Images)**：
-   - **精确对比用表格**，**趋势/比例用图表**。避免同一页同时塞满表格+图表。
-   - 如果原文包含 Markdown 表格，单独作为一页，type 为 "table" 或 "chart"。并在 text_content 中增加 table_data 字段。
-   - **原生图片智能排版 (Native Images Semantic Layout - VERY IMPORTANT)**：如果你判断原文中的某张本地图片与该页内容**强相关**（见上方"可用素材图片"列表），你**必须**在 JSON 中使用 `native_images` 字段来进行排版规划。
+   5. **图文重塑、图表与原生图片排版 (Text Layout, Charts & Native Images)**：
+      - **全面弃用原生表格 (NO NATIVE TABLES)**：本系统不再支持原生PPT表格。遇到原文中的表格时：
+        1. **纯数值表格**：若全是硬核数值（趋势/比例/份额），请提取为一页 `data` 类型，在 `text_content` 中增加 `table_data` 字段，且 `visualization` 必须指定为 `bar`、`line` 或 `pie`。
+        2. **文字型表格/对比**：必须重构为普通的文字排版（如 `comparison` 双列对比、`framework` 逻辑结构 或 `bullets` 极简要点），将核心内容提炼放入 `body` 数组中。
+        3. **极度复杂的巨型表格（如报价单）**：如果表格过于复杂无法简化，将其处理为一页包含总结性文字的 `content` 页面，并在 `speaker_notes` 中明确提示：“【重要】原文此处包含复杂表格，建议演讲者后续截图手动粘贴至本页”。
+        **绝对禁止使用 type 为 table 或 visualization 为 table/auto！**
+      - **原生图片智能排版 (Native Images Semantic Layout - VERY IMPORTANT)**：如果你判断原文中的某张本地图片与该页内容**强相关**（见上方"可用素材图片"列表），你**必须**在 JSON 中使用 `native_images` 字段来进行排版规划。
      - 只有在你非常有把握这张图片代表什么，并且它适合这张 PPT 时才使用它。
      - 为该页规划每个图片的绝对路径（path）和相对绝对坐标 `bounding_box`。
      - `left`, `top`, `width`, `height` 取值范围均在 `0.0` 到 `1.0` 之间。请根据内容的多少和图片的预期比例（横图/竖图）给出合理的 `width` 和 `height`，确保图片不要变形或被拉伸得太离谱。例如，如果是脑部扫描图（可能是横图或方图），给它大约 `width: 0.4, height: 0.5` 的空间。
@@ -340,11 +324,11 @@ class NarrativeAgent:
     "core_message": "本页试图让观众记住的唯一核心信息（供 AI 绘图或设计参考）",
     "narrative_role": "铺垫|证据|转折|高潮|结论|金句",
     "one_takeaway": "观众听完本页应记住的唯一一句话（10字内）",
-    "visualization": "table/bar/line/pie/auto",
+    "visualization": "bar/line/pie (仅在纯数值图表时填写，严禁使用table或auto)",
     "transition": "给演讲者的逻辑过渡提示（如何从上一页自然过渡到这一页）", 
     "text_content": {{
         "headline": "大标题，必须是带有观点的断言句 (例如：盲区：为何我们看不见？)",
-        "table_data": {{ "headers": ["H1"], "rows": [["v1"]] }},
+        "table_data": {{ "headers": ["年度", "销量"], "rows": [["2023", "100"]] }}, // 仅在纯数值且 visualization=bar/line/pie 时使用，文字对比千万不要用！严禁使用 table
         "subhead": "副标题/导语（可选，仅当能补充关键信息时填写）",
         "body_format": "paragraph|bullets|data|quote|mixed",
         "body": [
@@ -433,7 +417,7 @@ class NarrativeAgent:
             if page.get('type') == 'hero':
                 # Hero 页通常不需要冗长的 body，重点是 subhead 或 core_message
                 pass
-            elif page.get('type') in ['content', 'data', 'table'] and text_content.get('body'):
+            elif page.get('type') in ['content', 'data'] and text_content.get('body'):
                 preview_text += f"   **📄 极简要点 (Slide Text)**：\n"
                 for item in text_content['body']:
                     preview_text += f"     - {item}\n"
