@@ -62,6 +62,12 @@ python -m nano_banana_ppt.utils.regenerate "output.pptx" "ppt_generation_plan.js
 
 请查看 [CHANGELOG.md](./CHANGELOG.md) 以获取完整的历史更新记录。
 
+### [v2.4.0] - 2026-03-02
+*   🐛 **风格一致性根本修复**: 识别并修复了导致字体、配色、版式在幻灯片间不统一的架构级 bug——`design_system` 强化为含跨页一致性强制指令的「严格设计系统」，字体字段从 `plan_for_review.md` 往返中正确保留，每页 visual prompt 新增全局大纲上下文。
+*   🐛 **Content 母版覆盖范围修复**: `framework`、`flowchart`、`comparison`、`data`、`toc`、`breathing` 等信息展示类页面现已正确共享 content 母版参考图，视觉风格与内容页统一。
+*   🐛 **503 错误 Fallback 修复**: LLM 调用链区分对待 `429`（配额耗尽，任务内永久跳过）与 `503`（临时高峰，仅跳过本次，下次仍重试主模型），避免 API 高峰期整套 PPT 全部降级为最简陋 prompt。
+*   🐛 **`regenerate.py` 导入路径修复**: 修复 standalone 模式下因错误 import 路径导致的崩溃。
+
 ### [v2.3.0] - 2026-03-01
 *   🚀 **原生图片语义排版 (VLM Semantic Layout)**: 引入强悍的多模态排版系统。利用 `gemini-3.1-pro-preview` 的视觉能力，在 AI 生成 PPT 背景后，让大模型“睁眼”寻找完美的留白安全区。
 *   🚀 **完美比例与贴边对齐**: 原生图片插入时强制遵循原始长宽比 (`object-fit: contain` 逻辑)，并根据 VLM 计算的留白框自动进行视觉重心对齐（如左贴边、右贴边、完美居中），拒绝强行拉伸和错位。
