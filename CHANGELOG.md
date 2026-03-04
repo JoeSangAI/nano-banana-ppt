@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v2.4.1] - 2026-03-04
+
+### 🛠 重构与优化 (Refactoring & Improvements)
+
+*   **消除 temp_slide 重复文件**：`create_advanced_pptx` 此前为满足 `add_picture()` 需文件路径而在磁盘上另存 `temp_slide_XX.png`，且未清理，导致输出目录同时存在 `slide_XX.png` 与 `temp_slide_XX.png` 两套文件。现已改为优先直接使用 executor 已写入的 `slide_XX.png`，不再产生 temp 副本。
+
 ## [v2.4.0] - 2026-03-02
 
 ### 🐛 修复 (Bug Fixes)

@@ -504,10 +504,12 @@ Example:
             img = images.get(page_num)
 
             if img:
-                # 图表/普通页：添加背景图
-                temp_path = self.output_dir / f"temp_slide_{page_num:02d}.png"
-                img.save(temp_path, "PNG")
-                slide.shapes.add_picture(str(temp_path), 0, 0, prs.slide_width, prs.slide_height)
+                # 图表/普通页：添加背景图。优先使用已存在的 slide_XX.png（executor 已写入），
+                # 避免重复写入 temp_slide 造成两套文件；仅当文件不存在时再保存（少见 edge case）
+                slide_path = self.output_dir / f"slide_{page_num:02d}.png"
+                if not slide_path.exists():
+                    img.save(slide_path, "PNG")
+                slide.shapes.add_picture(str(slide_path), 0, 0, prs.slide_width, prs.slide_height)
 
             # Add Logo as a separate, movable PPTX shape (not burned into image)
             logo_path = slide_plan.get('logo_path')
