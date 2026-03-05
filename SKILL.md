@@ -51,6 +51,15 @@ Automates professional PowerPoint creation using Google's Nano Banana 2 (Gemini 
 
 The pipeline is split into two phases to allow human review before image generation (the expensive step).
 
+### Pre-defined Style Library (内置风格库)
+You can directly use these high-quality curated styles by passing their names to the `--style` argument or `style_preference` input:
+- **`claude_minimalist`**: Warm, intellectual, approachable. Off-white/cream backgrounds, elegant typography mixing serif and sans-serif.
+- **`neo_brutalism`** (新粗野主义): Raw, bold, unapologetic. High contrast, stark backgrounds, bright accents, thick black borders, hard offset shadows.
+- **`japanese_aesthetic`** (日式美学): Zen, quiet, balanced. Muted earth tones, extreme negative space, asymmetrical balance.
+- **`apple_keynote`**: Premium, cinematic. Deep black backgrounds, massive white typography, glowing gradients.
+- **`cyberpunk`**: Dark, dystopian, high-tech. Deep navy/black with neon cyan, magenta, electric yellow.
+- **`academic_paper`**: Clean, authoritative. White background, classic serif typography, formal grid structure.
+
 ### Phase 1: Plan (generates human-readable review plan, NO images)
 ```bash
 python3 -m nano_banana_ppt.main plan <content_file> [template_file] [logo_file] [output_name] [--pages N]
@@ -71,10 +80,12 @@ python3 -m nano_banana_ppt.main execute <项目目录或plan_for_review.md> [out
 - Generates images via Gemini, assembles `.pptx`.
 
 ### Agent Workflow (CRITICAL — follow this exact sequence):
-1. Run `plan` with user's content file.
-2. **Present the slide outline to the user** (from terminal output or by reading `plan_for_review.md`).
-3. **STOP. Wait for user confirmation.** Do NOT run `execute` in the same response/turn.
-4. **Only after the user explicitly says "确认" / "可以" / "开始生成" / "run execute"**, run `execute`.
+1. **Style Consultation (Interactive):** Before running any commands, ask the user if they have a preferred visual style. **Proactively list 3-4 relevant options** from the *Curated Style Library* (e.g., "Would you like a 'Claude Minimalist', 'Apple Keynote', or 'Liquid Glass' style?").
+2. Run `plan` with user's content file AND the selected `--style` (if any).
+3. **Present the slide outline to the user** (from terminal output or by reading `plan_for_review.md`).
+4. **Style Confirmation:** Remind the user they can still change the style by editing the `plan_for_review.md` file (refer to the "Style Inspirations" block in the file).
+5. **STOP. Wait for user confirmation.** Do NOT run `execute` in the same response/turn.
+6. **Only after the user explicitly says "确认" / "可以" / "开始生成" / "run execute"**, run `execute`.
 
 **⛔ FORBIDDEN:** Running `plan` and `execute` back-to-back in one go. The human must review plan_for_review.md and confirm before any image generation begins.
 

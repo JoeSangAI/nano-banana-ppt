@@ -199,7 +199,15 @@ def generate_plan(content_file: str, template_file: str = None,
         print(f"  P{p_num} [{p_type.upper():8s}] {title}")
     print(f"{'='*60}")
     print(f"\n⏸️  Phase 1 完成。")
-    print(f"    【重要】请审阅 plan_for_review.md，确认无误后再运行 execute。")
+    
+    # Proactively show styles available if user hasn't selected a curated one
+    from nano_banana_ppt.agents.style_library import STYLE_LIBRARY
+    print("\n💡 提示：您现在可以打开 plan_for_review.md 修改「风格」字段。")
+    print("   推荐尝试以下高级预设风格（填入名称即可）：")
+    for key, data in STYLE_LIBRARY.items():
+        print(f"   - {key:<20}: {data['description'][:60]}...")
+        
+    print(f"\n    【重要】请审阅 plan_for_review.md，确认无误后再运行 execute。")
     print(f"    请勿在同一轮对话中自动运行 execute——必须等待用户确认。")
     print(f"    确认后运行: execute \"{project_dir}\"")
 

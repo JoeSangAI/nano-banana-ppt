@@ -14,6 +14,21 @@ nano_banana_ppt/
 
 ## 使用方法
 
+### 预设风格库 (Curated Style Library)
+我们在 `v2.5.0` 引入了系统级预设风格库，您可以直接在 `--style` 中使用以下名称（或其中文别名）来获取极高品质的排版与配色方案：
+- **`claude_minimalist`** (Claude 风格): 温润、极简、知性。奶白色背景，优雅衬线体与无衬线体混排。
+- **`neo_brutalism`** (新粗野主义): 原始、大胆、高对比。亮色背景，黑色粗边框，生硬阴影，怪诞无衬线体。
+- **`japanese_aesthetic`** (日式美学 / Wabi-sabi): 禅意、侘寂。大地色系，极致留白，非对称排版。
+- **`apple_keynote`** (苹果发布会风格): 极致高级。深邃纯黑背景，巨大白色无衬线字体，发光渐变。
+- **`cyberpunk`** (赛博朋克): 科技、故障艺术。深蓝/纯黑底色，荧光青、品红、电光黄点缀。
+- **`academic_paper`** (学术风): 严谨、专业。纯白背景，经典衬线体，正式的网格排版。
+- **`liquid_glass`** (液态玻璃 / Bento): 高级科技风。半透明毛玻璃卡片，超细边框，Bento 网格排版。
+- **`magazine_editorial`** (时尚杂志风): 电影级留白，优雅衬线体，不对称排版，适合品牌/人物。
+- **`soft_3d_clay`** (3D 粘土风): 可爱、膨胀。马卡龙色系，哑光软材质，适合活泼轻松的场景。
+- **`dark_luxury`** (黑金奢华): 高级定制。深邃背景搭配暗金线条，适合高端商务/奢侈品。
+- **`traditional_chinese`** (新中式 / 国潮): 水墨意蕴。留白、朱红点缀、圆窗构图，适合文化/政务。
+- **`holographic_chrome`** (全息镭射 / Y2K): 液态金属，彩虹光泽，前卫艺术。
+
 ### 1. 环境准备
 
 确保已安装依赖：
@@ -61,6 +76,24 @@ python -m nano_banana_ppt.utils.regenerate "output.pptx" "ppt_generation_plan.js
 ## 📜 更新日志 (Changelog)
 
 请查看 [CHANGELOG.md](./CHANGELOG.md) 以获取完整的历史更新记录。
+
+### [v2.5.0] - 2026-03-05
+*   ✨ **预设风格库 (Curated Style Library)**: 引入了系统级高质量视觉风格预设。不仅提升了生图的一致性，还大幅优化了具体风格的美学表现。目前原生支持：
+    *   `Claude 风格` (claude_minimalist)：温润、极简、知性。
+    *   `新粗野主义` (neo_brutalism)：原始、大胆、高对比。
+    *   `日式美学` (japanese_aesthetic)：禅意、侘寂。
+    *   `苹果发布会风格` (apple_keynote)：极致高级、深邃。
+    *   `赛博朋克` (cyberpunk)：科技、故障艺术。
+    *   `学术风` (academic_paper)：严谨、专业。
+    *   `液态玻璃` (liquid_glass)：Bento 网格、毛玻璃。
+    *   `时尚杂志` (magazine_editorial)：电影级留白、优雅。
+    *   `3D粘土风` (soft_3d_clay)：可爱、膨胀软材质。
+    *   `黑金奢华` (dark_luxury)：高端定制、暗金。
+    *   `新中式` (traditional_chinese)：水墨、国潮。
+    *   `全息镭射` (holographic_chrome)：Y2K、液态金属。
+    系统将通过别名（如 "claude", "新粗野主义", "wabi-sabi"）自动匹配最高质量的视觉生成指令。
+*   ✨ **宽幅名人金句卡 (Wide Quote Card)**: 新增 `quote` 页面类型与专用排版模式，支持 1/3 肖像 + 2/3 巨大引言文字的经典杂志排版。
+*   ✨ **Markdown 审阅灵感库**: 在 `plan_for_review.md` 中新增风格灵感提示区，允许用户在 execute 前直接挑选或修改视觉风格。
 
 ### [v2.4.0] - 2026-03-02
 *   🐛 **风格一致性根本修复**: 识别并修复了导致字体、配色、版式在幻灯片间不统一的架构级 bug——`design_system` 强化为含跨页一致性强制指令的「严格设计系统」，字体字段从 `plan_for_review.md` 往返中正确保留，每页 visual prompt 新增全局大纲上下文。

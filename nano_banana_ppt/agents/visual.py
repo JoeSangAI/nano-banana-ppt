@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Union
 from openai import OpenAI
 
 from ..utils.llm_client import chat_completion_with_fallback, MODEL_FALLBACK_CHAIN
+from .style_library import get_curated_style, STYLE_LIBRARY
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -28,7 +29,10 @@ class VisualAgent:
         "big_number_data": "Large key number/metric with supporting label. High impact data visualization.",
         "split_screen_contrast": "50/50 vertical split. One side dark, one side light (or image vs text). Good for comparisons.",
         "minimalist_hero": "Extreme minimalism. Massive typography, nearly zero chrome. For 'Hero' slides.",
-        "chart_from_table": "Data visualization chart (bar/line/pie) derived from table data."
+        "chart_from_table": "Data visualization chart (bar/line/pie) derived from table data.",
+        "bento_grid": "Asymmetrical Bento Grid. Multiple rounded rectangular glass/card modules of varying sizes (one main hero module, several smaller metric modules). Highly structured yet dynamic.",
+        "dense_infographic": "High-density Infographic layout. A central visual hub connected to surrounding modules, or a highly structured modular grid. Uses icons, connectors, and clear data hierarchy to organize complex information.",
+        "wide_quote_card": "Wide Quote Card. 1/3 of the space for a realistic portrait with a subtle gradient transition, 2/3 for a massive quotation text with an oversized faint quotation mark in the background."
     }
 
     def __init__(self, api_key: str, api_base: str = None):
@@ -66,6 +70,18 @@ class VisualAgent:
         
         # 提取用户偏好，默认为 "Modern Professional Business"
         user_preference = constraints.get('style_preference', '') or 'Modern Professional Business'
+        
+        # 检查是否命中系统内置风格库 (Curated Style Library)
+        curated_style = get_curated_style(user_preference)
+        if curated_style:
+            logger.info(f"✨ 命中系统内置风格库: {user_preference} -> {curated_style['description'][:50]}...")
+            style_desc_str = f"Style: {curated_style.get('description')}. Palette: {', '.join(curated_style.get('palette', []))}."
+            style_config = curated_style.copy()
+            if "aliases" in style_config:
+                del style_config["aliases"]
+            style_config['mode'] = 'ai_minting_curated'
+            return style_desc_str, style_config
+
         topic = constraints.get('presentation_type', 'Business Presentation')
         audience = constraints.get('target_audience', 'General Professional')
 
@@ -144,6 +160,10 @@ Ensure the palette has high contrast for text reading.
             return 'minimalist_hero', VisualAgent.LAYOUT_LIBRARY['minimalist_hero']
         elif page_type == 'hero':
             return 'minimalist_hero', VisualAgent.LAYOUT_LIBRARY['minimalist_hero']
+        elif page_type == 'quote':
+            return 'wide_quote_card', VisualAgent.LAYOUT_LIBRARY['wide_quote_card']
+        elif page_type == 'infographic':
+            return 'dense_infographic', VisualAgent.LAYOUT_LIBRARY['dense_infographic']
         elif page_type == 'toc':
             return 'three_column_grid', VisualAgent.LAYOUT_LIBRARY['three_column_grid']
         elif page_type == 'data':
@@ -154,6 +174,8 @@ Ensure the palette has high contrast for text reading.
             pick = 'centered_headline'
         elif any(kw in ''.join(body) for kw in ['步', '第一', '第二', '阶段', 'Step', '->', '→']):
             pick = 'process_flow'
+        elif len(body) >= 4 and all(len(b) < 30 for b in body):
+            pick = 'bento_grid'
         elif len(body) == 3 and all(len(b) < 100 for b in body):
             pick = 'three_column_grid'
         elif len(body) <= 2:
@@ -176,9 +198,11 @@ Ensure the palette has high contrast for text reading.
             "cover": "【COVER DESIGN】Max visual impact. Title must be MASSIVE and center/left aligned. Use a symbolic, high-end 3D object or cinematic scene as the main visual anchor. Keep negative space for the title.",
             "section": "【SECTION TRANSITION】Minimalist and bold. Use a solid color or abstract texture background. The Section Title should be the only focus. Create a sense of 'pause' or 'new chapter'.",
             "hero": "【HERO / GOLDEN SENTENCE】Impact over detail. Use massive typography for the core message. Typography (Font, Weight, Positioning) MUST match the reference/style exactly. However, the Background Visual should be unique and relevant to the specific content (e.g. specific metaphor or scene).",
+            "quote": "【QUOTE CARD】High impact quotation. Usually split into portrait (1/3) and text (2/3). The quote text must be large and prominent. Use a faint large quotation mark in the background.",
             "toc": "【TABLE OF CONTENTS】Structured and clean. Use a grid or list layout. Use icons or large numbers for each chapter. High legibility is key.",
             "content": "【CONTENT SLIDE】Structured information. Use Bento grids or clean dividers to organize text. Ensure body text is legible (min 24pt equivalent). Balance text with a relevant visual on the side or top.",
             "data": "【DATA VISUALIZATION】Focus on the chart/number. If there is a big number, make it huge. If there is a chart description, visualize it as a sleek, modern chart (bar/line/pie) integrated into the scene.",
+            "infographic": "【INFOGRAPHIC / HIGH DENSITY】Modular and structured layout. Use a Bento Grid or central hub connector design. Organize complex information into clear, distinct sections (cards/glass panes). Use icons and visual hierarchy to manage high information density while keeping it clean and professional.",
             "ending": "【ENDING / BACK COVER】Simple and memorable. usually 'Thank You' or contact info. Clean background, centered text."
         }
         return instructions.get(page_type, instructions['content'])
