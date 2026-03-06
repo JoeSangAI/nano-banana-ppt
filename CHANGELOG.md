@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v2.5.1] - 2026-03-06
+
+### ✨ 新特性 (New Features)
+
+*   **开源贡献与版权支持**: 增加了 `MIT License` 和完整的 `Contributing` 指南，欢迎社区共同参与建设。
+
+### 🛠 重构与优化 (Refactoring & Improvements)
+
+*   **完全移除原生表格生成**: 为了强化全局视觉一致性，废弃了基于 `python-pptx` 的原生表格生成方案 (`data_visualizer.py`)，统一采用高质量图片渲染或大模型排版处理。
+*   **独立高清放大命令 (Upscale CLI)**: 新增独立的 `upscale` 命令行模式，支持通过 `--resolution 2K/4K` 和 `--slides 1,2,3` 指定特定幻灯片调用 Gemini 重新生成高清版本并组装。
+
 ## [v2.5.0] - 2026-03-05
 
 ### ✨ 新特性 (New Features)

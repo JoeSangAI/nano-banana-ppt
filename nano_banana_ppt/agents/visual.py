@@ -340,10 +340,16 @@ Ensure the palette has high contrast for text reading.
 【Global Context (For Consistency)】
 {outline_summary}
 
-【CURRENT PAGE TARGET (PRIORITY HIGHEST)】
+【CURRENT PAGE TARGET】
 - Section: {page.get('section_title', 'General')}
 - Page Type: {page_type.upper()}
-- Visual Suggestion: {visual_suggestion}
+- Initial Visual Suggestion: {visual_suggestion}
+
+【STYLE ADAPTATION RULE (CRITICAL)】
+The "Initial Visual Suggestion" above describes the desired metaphor or object. 
+You MUST ADAPT the subject matter/metaphor from the Initial Visual Suggestion so that it is rendered STRICTLY in the exact aesthetic of the Global Style and Color Palette. 
+For example, if the Suggestion says "a bright sunny corporate office" but the Global Style is "Cyberpunk Dark Neon", you MUST generate "a cyberpunk dark neon corporate office with glowing accents". 
+The Global Style ALWAYS OVERRIDES the stylistic implications of the Initial Visual Suggestion.
 
 【Instruction】
 1. **{type_instruction}**

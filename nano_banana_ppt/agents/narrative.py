@@ -19,7 +19,7 @@ class NarrativeAgent:
         self.client = OpenAI(
             api_key=api_key,
             base_url=api_base or "https://generativelanguage.googleapis.com/v1beta/openai",
-            timeout=600.0,  # 50+ 页生成需较长时间
+            timeout=900.0,  # 900 seconds = 15 minutes, allowing ample time for deep reasoning
             max_retries=3
         )
         self.model = "gemini-3.1-pro-preview" # 使用高智力模型进行逻辑规划
@@ -256,14 +256,14 @@ class NarrativeAgent:
 【深度叙事蓝图】 (CRITICAL: 必须严格遵循此蓝图的情绪节奏、核心洞察与内容映射。)
 {core_logic_skeleton}
 
+{constraints.get('design_system', '')}
+
 【输入原文】 (用于提取详细的论据、金句、数据和案例)
 {content_context[:50000]} ... (内容过长已截断)
 
 【可用素材图片 (Source Images)】
-你需要仔细分析以下原生图片的 URL 名字或提供的信息。
-如果用户在原文中包含了本地图片路径（如下所列），你必须判断该图片是否与当前幻灯片的主题和文本内容**强相关**。
-**只有当图片的内容确实能作为当前页面观点的有效视觉证据或补充时，才将其加入 `native_images` 字段。**
-**千万不要随意、草率地将不相关的图片硬塞到页面中！宁可不放图片，也不要放错图片。**
+我们已经通过视觉模型(VLM)提前过滤并识别了以下本地图片，它们与主题具有相关性。
+请你在规划页面时，**根据这里的“内容描述”来判断**，如果某张图非常适合作为当前页面的视觉证据，请加入 `native_images` 字段。
 {source_images_str}
 
 【任务要求】
@@ -271,10 +271,15 @@ class NarrativeAgent:
    - **严禁生硬堆砌**：所有的页面都必须服务于 Core Thesis，每一页都要有存在的理由。
    - **So What? 检查**：对每一页必须填写 `narrative_role`（在论证中的角色：铺垫/证据/转折/高潮/结论/金句）和 `one_takeaway`（观众听完本页应记住的唯一一句话，10字内）。这确保每页都有明确的叙事贡献。
    - **尊重源生框架**：如果【输入原文】是带有详细章节的目录或大纲（如 1.1, 1.2, 2.1...），请**细致地将其拆解为多张幻灯片**。不要把一整个大章节的内容全塞在一页里。一个知识点/一个小节对应一页或多页。
+   - **语言一致性 (Language Consistency)**：确保输出语言与【输入原文】及【目标受众】的语言习惯保持一致。除非需要引用外文名言、专有名词，或者明确知道受众是外语人群，否则不要在中文语境下随机跳转到英文。
 
 2. **内容提炼法则 (Content Refinement - CRITICAL)**：
    - PPT 不是 Word 的搬运工！**绝对不要把大段原话直接复制到 body 中**。
-   - **Slide 上只放“提词器” (Body)**：将复杂的原文提炼为极简、有力、口语化或商业化的“Bullet Points (要点)”。每个论点最多 10-30 字，每页不超过 3-4 个论点。必须一目了然。
+   - **Slide 上只放“提词器” (Body)**：将复杂的原文提炼为极简、有力、口语化或商业化的文案。
+   - **【打破僵化列表】**：不要全篇都用生硬的“名词：解释”这样的 Bullet Points！
+     - 你可以使用连贯的**一两句短语或短段落 (Paragraph)**。
+     - 你也可以只放**几个核心关键词 (Keywords)**。
+     - 只有在真正需要并列列举时，才使用列表项。增加文案的可读性、连贯性和力量感。
    - **把“肉”藏进备注 (Speaker Notes)**：为每页生成详尽的 `speaker_notes` 字段。将原文中那些精彩但冗长的长句、具体的案例细节、讲师需要补充的背景知识，全部放到这里。这样幻灯片才能保持清爽，同时不丢失任何信息深度。
    - **标题多设问、少平铺 (Headline - Q&A Style)**：大标题优先用设问句引导逻辑。**副标题按需出现**：仅当能补充关键信息或承上启下时使用；金句页、封面可省略。
    - **公式与金句 (Formula & Golden Quote)**：对核心概念须提炼为可记忆的形式。用 `hero` 页或显眼位置呈现。
@@ -287,7 +292,10 @@ class NarrativeAgent:
    - 使用 `data` 页来单独呈现硬核数据对比。
    - **流程、框架、对比**：当内容描述过程（如 Input→AI→Output）、层级（如 1+N+X 金字塔）、或对比关系（如 注意力↘ vs 内容↗）时，必须使用 `flowchart`、`framework` 或 `comparison` 类型，并在 visual_suggestion 中明确要求绘制对应图表。
    - 首页 `cover` 极简，只写大主题和分享人。
-   - **重要：`visual_suggestion` (配图/画面建议) 应该描述由 AI 生成的背景或插图。如果该页使用了 `native_images` (原生图片)，请在 `visual_suggestion` 中描述一个适合衬托这些原生图片的背景环境，并明确说明需要为原生图片留出空间。两者是互补关系。**
+   - **【最重要的一点】`visual_suggestion` (配图/画面建议)**：
+     - 请确保你设计的任何场景或画面建议，都**必须百分百符合并融合进全局视觉风格（Global Visual Design System）**中！
+     - 无论是隐喻、场景还是构图，都不要与这套视觉规范产生任何冲突。你需要思考：在这个特定风格下，这个概念应该如何呈现。
+     - 如果该页使用了 `native_images` (原生图片)，请描述一个适合衬托原生图片的背景环境，并明确说明需要为原生图片留出空白安全区。
 
 4. **页面类型定义**：
    - `cover`: 封面 (仅第1页)
@@ -334,8 +342,8 @@ class NarrativeAgent:
         "subhead": "副标题/导语（可选，仅当能补充关键信息时填写）",
         "body_format": "paragraph|bullets|data|quote|mixed",
         "body": [
-            "极简论据1 (10-30字)：提炼自原文核心要点。", 
-            "极简论据2 (10-30字)：提炼自原文核心要点。"
+            "这里可以是一句有力量的短句，或者一小段说明文本。", 
+            "也可以是几个并列的关键词，不要拘泥于生硬的列表格式。"
         ]
     }},
     "native_images": [

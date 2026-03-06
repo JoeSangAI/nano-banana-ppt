@@ -13,7 +13,8 @@ logger = logging.getLogger(__name__)
 
 # 主模型 → 备用模型链（当主模型不可用时依次尝试）
 MODEL_FALLBACK_CHAIN: List[str] = [
-    "gemini-3.1-pro-preview",    # 主模型
+    "gemini-2.5-flash",    # 主模型
+    "gemini-3.1-pro-preview",    
     "gemini-3-pro-preview",      # 备用 1：3.0 Pro
     "gemini-3-flash-preview",    # 备用 2：3.0 Flash
 ]

@@ -155,8 +155,8 @@ def generate_plan(content_file: str, template_file: str = None,
     elif logo_file:
         logger.warning(f"Logo 文件不存在: {logo_file}，将回退到模版截取")
 
-    # Step 3: 生成叙事大纲
-    print("\n📝 [Step 3/4] 正在构建叙事架构...")
+    # Step 3: 生成风格定义 (移动到生成大纲之前，让大纲感知风格)
+    print("\n🎨 [Step 3/5] 正在定义视觉风格...")
     constraints = {
         "target_audience": inferred.get("target_audience", "通用受众"),
         "presentation_type": inferred.get("presentation_type", "商业演示"),
@@ -165,17 +165,39 @@ def generate_plan(content_file: str, template_file: str = None,
         "style_preference": style_preference or inferred.get("style_preference", "专业商务"),
         "briefing": briefing,
     }
+    
+    style_definition = visual_agent.define_style(constraints, assets, template_info)
+    if isinstance(style_definition, tuple):
+        style_desc_str, style_config = style_definition
+    else:
+        style_desc_str = str(style_definition)
+        style_config = {"description": style_desc_str, "palette": [], "mode": "ai_minting"}
+        
+    # 构建传给大纲代理的设计系统描述
+    palette = style_config.get('palette', [])
+    if len(palette) >= 3:
+        color_constraint = f"Title color: {palette[2]}, Body text: {palette[3] if len(palette) > 3 else '#FFFFFF'}, Background base: {palette[0]}/{palette[1]}"
+    elif palette:
+        color_constraint = f"Palette: {', '.join(palette)}"
+    else:
+        color_constraint = ""
+        
+    design_system = f"""【Global Visual Design System】
+1. **Style**: {style_desc_str}
+2. **Color Palette**: {color_constraint}"""
+
+    # Step 4: 生成叙事大纲 (注入视觉风格约束)
+    print("\n📝 [Step 4/5] 正在构建叙事架构 (结合视觉风格)...")
+    
+    # 将设计系统注入到 constraints 中，传给 narrative_agent
+    constraints["design_system"] = design_system
+    
     narrative_outline = narrative_agent.generate_narrative_outline(content_context, constraints, content_file_path=content_file)
     print(f"✅ 叙事大纲生成完成，共 {len(narrative_outline)} 页")
 
-    # Step 4: 生成人类可审阅的 plan_for_review.md（不生成 plan.json）
-    print("\n🎨 [Step 4/4] 正在生成人类可审阅计划...")
-    style_definition = visual_agent.define_style(constraints, assets, template_info)
-    if isinstance(style_definition, tuple):
-        _, style_config = style_definition
-    else:
-        style_config = {"description": str(style_definition), "palette": [], "mode": "ai_minting"}
-
+    # Step 5: 生成人类可审阅的 plan_for_review.md（不生成 plan.json）
+    print("\n📋 [Step 5/5] 正在生成人类可审阅计划...")
+    
     meta = {
         "project_name": project_name,
         "project_dir": str(project_dir),

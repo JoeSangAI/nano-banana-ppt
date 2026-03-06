@@ -492,9 +492,13 @@ Text to display (render exactly, do not translate Chinese):
 - Subhead: "{subhead}"
 {'- Body items:\n' + body_text if body_text else ''}
 
-Visual/imagery direction from human: {visual_suggestion}
+Initial Visual Suggestion: {visual_suggestion}
 
-If the human provides a specific `Visual/imagery direction`, it takes ABSOLUTE HIGHEST PRIORITY. You MUST follow their visual direction rather than defaulting to generic flowchart, pyramid, or comparison templates.
+【STYLE ADAPTATION RULE (CRITICAL)】
+The "Initial Visual Suggestion" above describes the desired metaphor or object, but its specific stylistic vibe may be outdated because the Global Style was updated by the user. 
+You MUST ADAPT the subject matter/metaphor from the Initial Visual Suggestion so that it is rendered STRICTLY in the exact aesthetic of the Global Style and Color Palette. 
+For example, if the Suggestion says "a bright sunny corporate office" but the Global Style is "Cyberpunk Dark Neon", you MUST generate "a cyberpunk dark neon corporate office with glowing accents". 
+The Global Style ALWAYS OVERRIDES the stylistic implications of the Initial Visual Suggestion.
 
 Output: A single, detailed English prompt string for image generation. No explanation. Include: background, layout, typography placement.
 CRITICAL consistency rules:
