@@ -1,142 +1,125 @@
-# Nano Banana PPT
+# 🍌 Nano Banana PPT
 
-基于 Nano Banana 2 的全自动 PPT 生成工具。
+**基于大模型的高级全自动 PPT 生成引擎（专为 Cursor/AI Agent 设计的 Skill）**
 
-## 目录结构
+这是一个致力于“消除丑陋幻灯片”的开源工具。它不仅仅是将文本塞进模板里，而是通过多智能体（Multi-Agent）协作，**像一个真正的人类策划与视觉设计师一样**，帮你把长篇文档转化为逻辑严密、极具美感的高级 PPT。
 
+无论你是通过 Cursor 这样的 AI IDE 对它下达自然语言指令，还是作为开发者在服务器上部署，它都能为你交付媲美专业发布会的演示文稿。
+
+---
+
+## 🌟 核心亮点与优势 (Why Nano Banana PPT?)
+
+### 1. 🧠 精心打磨的叙事逻辑 (Narrative First)
+*   **深度内容重构**：市面上的工具往往只是把文章按段落切碎，而我们内置了 `NarrativeAgent`。它会像专业咨询顾问一样分析你的长文，梳理出 SCQA（情境-冲突-问题-解答）或“英雄之旅”等骨架，确保 PPT 逻辑严密、富有说服力。
+*   **双阶段审阅（白盒生成）**：拒绝黑盒式的“一键开盲盒”。它会先生成一份人类可读的 `plan_for_review.md` 大纲。你可以提前预览每页的标题、金句、甚至是配图思路，确认这正是你想表达的内容后，再让 AI 真正开始耗费算力去渲染图片。
+*   **自带“演讲者备注”**：它会自动把详细的业务论述藏在 PPT 的“演讲者备注（Speaker Notes）”里，而让屏幕上的文字保持极其精简的“金句”状态，彻底告别“字满为患”。
+
+### 2. 🎨 极致的风格与模板系统 (Aesthetic Excellence)
+*   **自带 12+ 高级内置风格**：系统原生内置了极高品质的设计流派。无论是苹果发布会风（`apple_keynote`）、温润知性的 Claude 风（`claude_minimalist`），还是新粗野主义（`neo_brutalism`）、科技液态玻璃（`liquid_glass`）、甚至新中式国潮，只需一句口令即可调用。
+*   **智能模板克隆 (Style Cloning)**：如果你公司有现成的 PDF/PPTX 模板，扔给它！`TemplateAgent` 会自动提取其中的色彩规范（Palette）、字体组合和版式基调，克隆出一个完美适配的 PPT。
+*   **AI 无限铸模 (AI Minting)**：既没有模板也不想用内置？只要描述你想要的 Vibe（比如“赛博朋克霓虹灯的商业计划书”），AI 会实时为你铸造一套全新的色彩与视觉系统。
+*   **附赠“真·可编辑模板页”**：在生成完毕的 PPT 最后，系统会智能追加两张带有原生 UI 边框、排版标签、占位图片框的**「空白可编辑模板页」**。并且自带智能亮度对比度检测，确保客户拿去直接输入文字时，配色与排版完全一致且清晰。
+
+### 3. 👁️ 多模态视觉黑科技 (VLM Semantic Layout)
+*   **大模型排版“长眼了”**：当你在 PPT 中插入自己的数据图表或配图时，传统的工具经常会挡住背景里的关键文字。本工具会调用 Gemini 的视觉能力（VLM）去**“看”**一眼刚刚生成的底图，精准找到留白安全区，完美嵌入你的原生图片（拒绝变形与遮挡）。
+
+### 4. 🌍 极强的工作流集成与兼容性 (Ecosystem Ready)
+*   **企业品牌植入**：原生支持传入公司 Logo 文件，系统会根据页面构图智能将其安放在最合适的角落（支持透明度处理）。
+*   **全场景素材兼容**：不论是本地图片、还是网络链接（http/https），甚至是各种网页里抓下来的 `WebP` 格式，都会自动下载转换并完美嵌入到 PPTX 中。支持将 NotebookLM 或其他知识库生成的内容无缝对接到此工具。
+*   **高便携环境迁移**：核心依赖极少，不依赖重量级的本地浏览器环境。非常容易迁移到其他 Agent 平台（如“小龙虾”、Dify、Coze 等），或是封装成 API 供云端调用。
+
+---
+
+## 🚀 如何安装与使用 (For 普通用户 & Cursor 玩家)
+
+如果你不想配置复杂的开发环境，仅仅是想在 Cursor (或 Cline) 这样的 AI 编程助手里使用它，这是最简单的玩法。
+
+### 第 1 步：配置你的大模型 API 密钥
+本工具底层使用 Google 的极速且强大的 Gemini 模型。你需要在电脑的终端或项目根目录的 `.env` 文件中配置以下环境变量（建议使用 OpenAI 兼容格式的转发 API，性价比极高）：
+```bash
+export OPENAI_API_KEY="sk-你的API密钥"
+export OPENAI_API_BASE="https://你的API代理地址/v1"
 ```
+
+### 第 2 步：安装 Cursor Skill
+1. 将本项目 clone 到本地，或者直接把 `nano_banana_ppt` 文件夹放进你的工作区。
+2. 在 Cursor 中，把本项目的 `.cursor/skills/nano-banana-ppt/SKILL.md` 内容复制到你自己的 Agent 记忆库或 Cursor Rules 中。
+3. 确保你的 Python 环境装了这几个包：`pip install openai python-pptx pillow pymupdf requests`
+
+### 第 3 步：直接对 AI 说话！
+你现在可以直接在 Cursor 的聊天框里对 AI 这样下达指令：
+
+> 🗣️ *"使用 nano-banana-ppt 技能，帮我把这份 `商业计划书.md` 转换成一份 PPT。风格我想要 'liquid_glass'（液态玻璃），并且在右上角加上我的公司 `logo.png`。"*
+
+**AI 的工作流将会是这样的：**
+1. **生成大纲**：AI 会先阅读文档，并在你的文件夹里生成一个 `plan_for_review.md`。
+2. **人类确认**：AI 会停下来问你：“大纲和分页规划好了，你看这个叙事逻辑满意吗？”
+3. **一键生成**：当你回复“没问题，开始生成”后，它就会开始跑图并最终输出一个精美的 `.pptx` 文件给你。
+
+---
+
+## 💻 开发者与命令行指南 (For Developers)
+
+如果你想在服务器上跑批处理，或者想二次开发，请看这里。
+
+### 核心目录结构
+```text
 nano_banana_ppt/
-  agents/           # AI 代理 (叙事、视觉、模版)
-  core/             # 核心逻辑 (生成器、执行器)
-  utils/            # 工具脚本 (修复、分析)
-  main.py           # 统一入口
+  agents/           # AI 代理群 (NarrativeAgent, VisualAgent, TemplateAgent 等)
+  core/             # 核心逻辑 (PPTX 生成器、执行器)
+  utils/            # 实用脚本 (高清重绘、修补等)
+  main.py           # 统一 CLI 入口
 ```
 
-## 使用方法
+### CLI 命令行调用
 
-### 预设风格库 (Curated Style Library)
-我们在 `v2.5.0` 引入了系统级预设风格库，您可以直接在 `--style` 中使用以下名称（或其中文别名）来获取极高品质的排版与配色方案：
-- **`claude_minimalist`** (Claude 风格): 温润、极简、知性。奶白色背景，优雅衬线体与无衬线体混排。
-- **`neo_brutalism`** (新粗野主义): 原始、大胆、高对比。亮色背景，黑色粗边框，生硬阴影，怪诞无衬线体。
-- **`japanese_aesthetic`** (日式美学 / Wabi-sabi): 禅意、侘寂。大地色系，极致留白，非对称排版。
-- **`apple_keynote`** (苹果发布会风格): 极致高级。深邃纯黑背景，巨大白色无衬线字体，发光渐变。
-- **`cyberpunk`** (赛博朋克): 科技、故障艺术。深蓝/纯黑底色，荧光青、品红、电光黄点缀。
-- **`academic_paper`** (学术风): 严谨、专业。纯白背景，经典衬线体，正式的网格排版。
-- **`liquid_glass`** (液态玻璃 / Bento): 高级科技风。半透明毛玻璃卡片，超细边框，Bento 网格排版。
-- **`magazine_editorial`** (时尚杂志风): 电影级留白，优雅衬线体，不对称排版，适合品牌/人物。
-- **`soft_3d_clay`** (3D 粘土风): 可爱、膨胀。马卡龙色系，哑光软材质，适合活泼轻松的场景。
-- **`dark_luxury`** (黑金奢华): 高级定制。深邃背景搭配暗金线条，适合高端商务/奢侈品。
-- **`traditional_chinese`** (新中式 / 国潮): 水墨意蕴。留白、朱红点缀、圆窗构图，适合文化/政务。
-- **`holographic_chrome`** (全息镭射 / Y2K): 液态金属，彩虹光泽，前卫艺术。
-
-### 1. 环境准备
-
-确保已安装依赖：
+**阶段一：生成审阅计划 (Phase 1)**
 ```bash
-pip install openai python-pptx pillow pymupdf requests
+python3 -m nano_banana_ppt.main plan "content.md" [template.pdf] [logo.png] [output_name] --style claude_minimalist
 ```
+*这会生成一个 `plan_for_review.md`。你可以手动打开这个 Markdown 修改每页的标题或决定某页应该用什么图表。*
 
-设置 API Key：
+**阶段二：执行生成与组装 (Phase 2)**
 ```bash
-export OPENAI_API_KEY="your-key"
-export OPENAI_API_BASE="https://generativelanguage.googleapis.com/v1beta/openai"
+python3 -m nano_banana_ppt.main execute output/ppt/your_project_dir --resolution 1K
 ```
 
-### 2. 一键生成 (Auto Pipeline)
-
-这是推荐的使用方式，自动完成从文档解析到 PPT 生成的全过程。
-
+**独立生图与高清放大 (Upscale)**
+如果你对 PPT 里某几张图的清晰度不满意，或者想用于印刷：
 ```bash
-# 仅提供内容，AI 自动设计风格
-python -m nano_banana_ppt.main "your_content.md"
-
-# 提供内容和模版 (PDF)
-python -m nano_banana_ppt.main "your_content.md" "template.pdf" "output_filename"
+python3 -m nano_banana_ppt.main upscale output/ppt/your_project_dir --resolution 4K --slides 1 3 5
 ```
 
-### 3. 独立工具
+---
 
-**独立生图工具 (原 gen_image.py):**
-```bash
-python nano_banana_ppt/utils/image_gen.py "A futuristic city"
-```
+## 📜 更新日志 (Changelog摘要)
 
-**PPT 修复工具:**
-```bash
-python -m nano_banana_ppt.utils.regenerate "output.pptx" "ppt_generation_plan.json"
-```
-
-## 开发指南
-
-- **NarrativeAgent**: 负责将长文档转化为结构化的 JSON 大纲。
-- **VisualAgent**: 负责将大纲转化为生图 Prompt (包含 Style Injection)。
-- **TemplateAgent**: 负责解析 PDF 模版，提取 Logo 和参考图。
-- **Executor**: 读取视觉计划，调用 Nano Banana 2 生成图片并组装 PPTX。
-
-## 📜 更新日志 (Changelog)
-
-请查看 [CHANGELOG.md](./CHANGELOG.md) 以获取完整的历史更新记录。
+详细更新请查看 [CHANGELOG.md](./CHANGELOG.md) 
 
 ### [v2.5.2] - 2026-03-06
-*   ✨ **真·PPT模板页生成**: 废弃了之前仅生成一张纯色图的方案。现在每次生成 PPT 都会在末尾追加两张（单栏/双栏图文）带有真实原生边框、标签与文本框的「空白可编辑模板页」，方便用户自由补充扩展。
-*   🐛 **对比度智能保护**: 修复了浅色背景下使用浅色次要文本导致字看不清的问题。新增文字与背景亮度实时校验（Luminance Contrast），自动干预强制转换为高对比度颜色。
+*   ✨ **真·PPT模板页生成**: 每次生成 PPT 会在末尾追加两张（单栏/双栏图文）带有真实原生边框、标签与可编辑文本框的「空白模板页」。
+*   🐛 **对比度智能保护**: 修复浅色背景下浅色占位文本“隐形”的 Bug，引入文字与背景亮度实时校验（Luminance Contrast）算法。
 
 ### [v2.5.0] - 2026-03-05
-*   ✨ **预设风格库 (Curated Style Library)**: 引入了系统级高质量视觉风格预设。不仅提升了生图的一致性，还大幅优化了具体风格的美学表现。目前原生支持：
-    *   `Claude 风格` (claude_minimalist)：温润、极简、知性。
-    *   `新粗野主义` (neo_brutalism)：原始、大胆、高对比。
-    *   `日式美学` (japanese_aesthetic)：禅意、侘寂。
-    *   `苹果发布会风格` (apple_keynote)：极致高级、深邃。
-    *   `赛博朋克` (cyberpunk)：科技、故障艺术。
-    *   `学术风` (academic_paper)：严谨、专业。
-    *   `液态玻璃` (liquid_glass)：Bento 网格、毛玻璃。
-    *   `时尚杂志` (magazine_editorial)：电影级留白、优雅。
-    *   `3D粘土风` (soft_3d_clay)：可爱、膨胀软材质。
-    *   `黑金奢华` (dark_luxury)：高端定制、暗金。
-    *   `新中式` (traditional_chinese)：水墨、国潮。
-    *   `全息镭射` (holographic_chrome)：Y2K、液态金属。
-    系统将通过别名（如 "claude", "新粗野主义", "wabi-sabi"）自动匹配最高质量的视觉生成指令。
-*   ✨ **宽幅名人金句卡 (Wide Quote Card)**: 新增 `quote` 页面类型与专用排版模式，支持 1/3 肖像 + 2/3 巨大引言文字的经典杂志排版。
-*   ✨ **Markdown 审阅灵感库**: 在 `plan_for_review.md` 中新增风格灵感提示区，允许用户在 execute 前直接挑选或修改视觉风格。
-
-### [v2.4.0] - 2026-03-02
-*   🐛 **风格一致性根本修复**: 识别并修复了导致字体、配色、版式在幻灯片间不统一的架构级 bug——`design_system` 强化为含跨页一致性强制指令的「严格设计系统」，字体字段从 `plan_for_review.md` 往返中正确保留，每页 visual prompt 新增全局大纲上下文。
-*   🐛 **Content 母版覆盖范围修复**: `framework`、`flowchart`、`comparison`、`data`、`toc`、`breathing` 等信息展示类页面现已正确共享 content 母版参考图，视觉风格与内容页统一。
-*   🐛 **503 错误 Fallback 修复**: LLM 调用链区分对待 `429`（配额耗尽，任务内永久跳过）与 `503`（临时高峰，仅跳过本次，下次仍重试主模型），避免 API 高峰期整套 PPT 全部降级为最简陋 prompt。
-*   🐛 **`regenerate.py` 导入路径修复**: 修复 standalone 模式下因错误 import 路径导致的崩溃。
+*   ✨ **预设风格库 (Curated Style Library)**: 引入了 `Claude 风格`、`新粗野主义`、`赛博朋克` 等 12 种系统级高质量视觉风格预设。
 
 ### [v2.3.0] - 2026-03-01
-*   🚀 **原生图片语义排版 (VLM Semantic Layout)**: 引入强悍的多模态排版系统。利用 `gemini-3.1-pro-preview` 的视觉能力，在 AI 生成 PPT 背景后，让大模型“睁眼”寻找完美的留白安全区。
-*   🚀 **完美比例与贴边对齐**: 原生图片插入时强制遵循原始长宽比 (`object-fit: contain` 逻辑)，并根据 VLM 计算的留白框自动进行视觉重心对齐（如左贴边、右贴边、完美居中），拒绝强行拉伸和错位。
-*   🚀 **自动网络图片兜底**: 解析器新增对 `http/https` 图片链接的自动下载和本地路径映射支持，并自动修复 `WebP` 格式（无损转 PNG）以兼容微软 Office 引擎。
-*   🚀 **母版背景储备页增强**: 最终生成的纯净背景页将严格提取并继承整套 PPT 的核心色彩配置 (`palette`) 与材质隐喻，实现无缝的临时加页支持。
-*   🛠 **人类可读审核流优化**: 简化 `plan_for_review.md` 的呈现结构，移除冗余的技术元数据，原生图片预览直接采用内联 HTML 小图渲染，提升主讲人审阅体验。
+*   🚀 **原生图片语义排版 (VLM Semantic Layout)**: 让大模型“睁眼”寻找完美的留白安全区，完美嵌入原生图片。
 
-### [v2.2.0] - 2026-02-28
-*   🚀 **模型底座全面升级**: 代理与生图全线升级至 `gemini-3.1-pro-preview` 与 `gemini-3.1-flash-image-preview`。
-*   🚀 **强化叙事提取蓝图**: 深度规划演讲节奏与情绪，支持 Briefing 意图注入，改善排版分布。
-*   🚀 **双阶段自动化流**: 引入 Phase 1 (Plan) Markdown 审阅机制，确认无误后再执行 Phase 2 (Execute)。
-*   🚀 **混合图表渲染系统**: 表格采用原生 PPT 渲染（可编辑），静态图表渲染为高清图片。
-*   🚀 **演讲备注支持**: 自动为每页生成详尽“演讲备注”，保持屏幕文案精简。
-*   🛠 **稳定性大幅提升**: 放宽超时至 600 秒（支持 50+ 页文档），最高 5 次 API 退避重试机制，并发数控制优化。
-*   🐛 **修复**: 导入路径异常、不完整图片角点问题、过度生成纯要点 (bullet points) 等。
+---
 
-## 参与贡献 (Contributing)
+## 🤝 参与贡献 (Contributing)
 
-欢迎提交代码让这个工具变得更好！如果你是第一次在 GitHub 参与开源项目，流程如下：
+欢迎提交 PR 让这个工具变得更好！
+1. Fork 本仓库并 `git clone` 到本地
+2. 创建特性分支：`git checkout -b feature/amazing-feature`
+3. 提交修改：`git commit -m "feat: add amazing feature"`
+4. 推送并提交 Pull Request
 
-1. **Fork 本仓库**：点击右上角的 `Fork` 按钮，将代码复制到你的账号下。
-2. **克隆代码**：将你账号下的仓库 `git clone` 到本地。
-3. **创建分支**：`git checkout -b feature/your-feature-name`
-4. **提交修改**：`git commit -m "feat: 增加某个功能"`
-5. **推送到你的仓库**：`git push origin feature/your-feature-name`
-6. **发起合并请求 (Pull Request)**：回到本仓库页面，点击 `New Pull Request`。
-
-我会收到通知并 Review 你的代码，如果合适就会合并进来！
-
-## 版权与开源协议 (License)
+## ⚖️ 版权与开源协议 (License)
 
 本项目采用 [MIT License](./LICENSE) 开源协议。
-你可以自由地使用、修改和分发，但请保留原作者的版权声明。
+你可以自由地使用、修改和商业化分发，但请保留原作者的版权声明。
 
 Copyright (c) 2026 桑卓豪 Joe
