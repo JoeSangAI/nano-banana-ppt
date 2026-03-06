@@ -77,6 +77,10 @@ python -m nano_banana_ppt.utils.regenerate "output.pptx" "ppt_generation_plan.js
 
 请查看 [CHANGELOG.md](./CHANGELOG.md) 以获取完整的历史更新记录。
 
+### [v2.5.2] - 2026-03-06
+*   ✨ **真·PPT模板页生成**: 废弃了之前仅生成一张纯色图的方案。现在每次生成 PPT 都会在末尾追加两张（单栏/双栏图文）带有真实原生边框、标签与文本框的「空白可编辑模板页」，方便用户自由补充扩展。
+*   🐛 **对比度智能保护**: 修复了浅色背景下使用浅色次要文本导致字看不清的问题。新增文字与背景亮度实时校验（Luminance Contrast），自动干预强制转换为高对比度颜色。
+
 ### [v2.5.0] - 2026-03-05
 *   ✨ **预设风格库 (Curated Style Library)**: 引入了系统级高质量视觉风格预设。不仅提升了生图的一致性，还大幅优化了具体风格的美学表现。目前原生支持：
     *   `Claude 风格` (claude_minimalist)：温润、极简、知性。
