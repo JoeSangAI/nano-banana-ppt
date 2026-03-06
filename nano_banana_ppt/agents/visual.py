@@ -221,21 +221,27 @@ Ensure the palette has high contrast for text reading.
 
         palette = style_config.get('palette', [])
         if len(palette) >= 3:
+            accents = ", ".join(palette[2:])
             color_constraint = (
-                f"Title color: {palette[2]}, "
-                f"Body text: {palette[3] if len(palette) > 3 else '#FFFFFF'}, "
-                f"Background base: {palette[0]}/{palette[1]}"
+                f"Background base MUST BE strictly {palette[0]} (Never use {palette[1]} for background). "
+                f"All main text (Headlines and Body) MUST BE {palette[1]} to ensure high contrast and readability. "
+                f"Use {accents} strictly for accents, highlights, shapes, or small decorative elements ONLY."
             )
         elif palette:
-            color_constraint = f"Palette: {', '.join(palette)}"
+            color_constraint = f"Palette: {', '.join(palette)}. Primary Background MUST BE {palette[0]}, Primary Text MUST BE {palette[1]}."
         else:
             color_constraint = ""
+
+        font_constraint = ""
+        if style_config.get('fonts'):
+            fonts_str = ', '.join(style_config['fonts'])
+            font_constraint = f"\n4. **Typography (STRICTLY ENFORCED)**: You MUST use these exact fonts on EVERY single slide: {fonts_str}. Headings must ALWAYS use the heading font, and body text must ALWAYS use the body font. Never change font families between slides. NEVER use random or generic fonts."
 
         # 4. Design system
         design_system = f"""【Visual Design System (STRICT)】
 1. **Global Style**: {style_definition}
 2. **Color Palette (MANDATORY)**: {color_constraint}
-3. **Consistency**: ALL slides must use the exact same fonts, colors, and decorative elements."""
+3. **Consistency**: ALL slides must use the exact same fonts, colors, and decorative elements.{font_constraint}"""
 
         # 5. Global Context Injection (Summary of the whole deck)
         # Create a condensed outline string
@@ -309,7 +315,7 @@ Ensure the palette has high contrast for text reading.
             type_instruction = self._get_page_type_specific_instruction(page_type)
 
             # 5. Build prompt
-            system_prompt = "You are an expert Prompt Engineer for Nano Banana 2 (Gemini Image)."
+            system_prompt = "You are an expert Prompt Engineer for Nano Banana 2 (Gemini Image). Your top priority is maintaining strict visual and typographic consistency across all generated slides."
 
             if template_info:
                 prompt_mode = f"""【Mode: STYLE CLONING】
@@ -328,7 +334,8 @@ Ensure the palette has high contrast for text reading.
 - The reference image contains TEMPLATE PLACEHOLDER labels such as "标题", "内容", "小标题", "副标题", "单击此处编辑". These are NOT real content. You MUST NOT reproduce ANY of them.
 - Do NOT reproduce ANY text visible in the reference image that is not listed in the TEXT CONTENT section below.
 - Do NOT translate any Chinese text. Render it exactly as provided.
-- Do NOT add decorative text, watermarks, or labels not in the TEXT CONTENT section."""
+- Do NOT add decorative text, watermarks, or labels not in the TEXT CONTENT section.
+- Do NOT use random, inconsistent fonts. Typography MUST strictly adhere to the defined font families and weights in the Global Style."""
 
             user_prompt = f"""Generate a high-fidelity image generation prompt for a PPT slide.
 
@@ -387,37 +394,77 @@ Directly output the final image-generation Prompt string. No explanation."""
             except Exception as e:
                 logger.error(f"Prompt生成失败 (Page {page.get('page_num')}): {e}")
 
-        # Bonus: pure background page
+        # Bonus: generate blank template slides
         if visual_plan:
-            logger.info("➕ 追加纯背景页 (Bonus Slide)...")
-            bg_prompt = f"""Generate a pure background image for a PPT slide.
-
+            logger.info("➕ 追加模板页 (Blank Template Slides)...")
+            
+            # Template 1: Standard Content Layout
+            tpl1_prompt = f"""Generate a blank presentation template slide.
+            
 {design_system}
 
 【Instruction】
-- Create a clean, high-quality background texture or gradient matching the Global Style.
-- CRITICAL: NO TEXT, NO LOGOS, NO ICONS, NO FOREGROUND OBJECTS.
+- Create a highly structured, professional blank slide for content.
+- Include a distinct, subtle decorative area for the slide Title (e.g., a subtle header bar, a faint border, or a designated glowing area).
+- Leave the main body area clean and spacious for the user to add their own text or images later.
+- CRITICAL: NO ACTUAL TEXT, NO LOGOS, NO ICONS in the layout. Only abstract structural elements, frames, and background textures matching the Global Style.
 
 【Output】
 Directly output the final Prompt string."""
+
+            # Template 2: Split / Double Column Layout
+            tpl2_prompt = f"""Generate a blank presentation template slide with a split layout.
+            
+{design_system}
+
+【Instruction】
+- Create a highly structured, professional blank slide designed for a two-column or split layout.
+- For example, left side has a subtle card/glass pane for text, right side is open for an image; or a 50/50 split with subtle divider lines.
+- Include a distinct, subtle decorative area for the slide Title.
+- CRITICAL: NO ACTUAL TEXT, NO LOGOS, NO ICONS in the layout. Only abstract structural elements, dividers, frames, and background textures matching the Global Style.
+
+【Output】
+Directly output the final Prompt string."""
+
             try:
-                response = chat_completion_with_fallback(
+                # Generate Template 1
+                resp1 = chat_completion_with_fallback(
                     self.client, model=self.model, model_fallback=MODEL_FALLBACK_CHAIN,
                     messages=[
-                        {"role": "system", "content": "You are a background texture designer."},
-                        {"role": "user", "content": bg_prompt}
+                        {"role": "system", "content": "You are a UI/UX designer specializing in presentation templates."},
+                        {"role": "user", "content": tpl1_prompt}
                     ],
                     temperature=0.7
                 )
                 visual_plan.append({
                     "page_num": len(visual_plan) + 1,
-                    "type": "background_only",
-                    "title": "Pure Background",
-                    "visual_prompt": response.choices[0].message.content.strip(),
+                    "type": "template_content",
+                    "title": "空白内容模板",
+                    "visual_prompt": resp1.choices[0].message.content.strip(),
                     "reference_image": None,
-                    "style_config": style_config
+                    "style_config": style_config,
+                    "layout": "centered_headline" # will be used for placeholder insertion
+                })
+                
+                # Generate Template 2
+                resp2 = chat_completion_with_fallback(
+                    self.client, model=self.model, model_fallback=MODEL_FALLBACK_CHAIN,
+                    messages=[
+                        {"role": "system", "content": "You are a UI/UX designer specializing in presentation templates."},
+                        {"role": "user", "content": tpl2_prompt}
+                    ],
+                    temperature=0.7
+                )
+                visual_plan.append({
+                    "page_num": len(visual_plan) + 1,
+                    "type": "template_split",
+                    "title": "空白分栏模板",
+                    "visual_prompt": resp2.choices[0].message.content.strip(),
+                    "reference_image": None,
+                    "style_config": style_config,
+                    "layout": "left_text_right_visual" # will be used for placeholder insertion
                 })
             except Exception as e:
-                logger.error(f"背景页生成失败: {e}")
+                logger.error(f"模板页生成失败: {e}")
 
         return visual_plan

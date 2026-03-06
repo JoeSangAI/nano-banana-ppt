@@ -494,8 +494,7 @@ Example:
             table_data = slide_plan.get('table_data') or text_content.get('table_data')
             visualization = slide_plan.get('visualization', '')
 
-            # 1. 对有全屏背景图的页面，一律使用 Blank 布局，避免未填充占位符显示为黑色块
-            # 背景图/图表页：强制 Blank 布局，消除黑色占位符
+            # 对于模板页，使用空白布局，但稍后我们将添加文本框
             layout = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[0]
 
             slide = prs.slides.add_slide(layout)
@@ -510,6 +509,171 @@ Example:
                 if not slide_path.exists():
                     img.save(slide_path, "PNG")
                 slide.shapes.add_picture(str(slide_path), 0, 0, prs.slide_width, prs.slide_height)
+
+            # --- NEW: Add Editable Text Boxes for Template Slides ---
+            if page_type.startswith('template_'):
+                logger.info(f"✨ 为模板页 {page_num} 添加可编辑文本框和装饰...")
+                
+                # Default text formatting based on style config
+                title_font = style_config.get('fonts', ['Arial'])[0]
+                body_font = style_config.get('fonts', ['Arial', 'Arial'])[-1]
+                palette = style_config.get('palette', ['#FFFFFF', '#000000', '#CCCCCC', '#666666'])
+                
+                # Dynamic text color logic to ensure visibility
+                bg_color_hex = palette[0]
+                text_color_hex = palette[1] if len(palette) > 1 else '#000000'
+                accent_color_hex = palette[2] if len(palette) > 2 else '#666666'
+                
+                # Check contrast and adjust if necessary
+                def luminance(hex_col):
+                    h = hex_col.lstrip('#')
+                    r, g, b = tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+                    return 0.2126*r + 0.7152*g + 0.0722*b
+                    
+                bg_lum = luminance(bg_color_hex)
+                text_lum = luminance(text_color_hex)
+                
+                # Default text color setup
+                text_color = hex_to_rgb(text_color_hex)
+                accent_color = hex_to_rgb(accent_color_hex)
+                
+                # Determine a safe secondary text color (grayish variant of text color, not background)
+                if bg_lum > 128:
+                    # Light background -> text should be dark.
+                    # If the assigned text color is too light, force it to dark gray/black
+                    if text_lum > 150: 
+                        text_color = hex_to_rgb('#222222')
+                    secondary_text_color = hex_to_rgb('#666666') # Dark gray for secondary
+                else:
+                    # Dark background -> text should be light.
+                    # If the assigned text color is too dark, force it to white
+                    if text_lum < 100:
+                        text_color = hex_to_rgb('#FFFFFF')
+                    secondary_text_color = hex_to_rgb('#CCCCCC') # Light gray for secondary
+                
+                logger.info(f"模板使用的字体: {title_font} (标题), {body_font} (正文)")
+                logger.info(f"模板使用的颜色: 文本={text_color_hex}, 装饰={accent_color_hex}")
+                
+                # Determine alignment based on layout hint
+                layout_hint = slide_plan.get('layout', 'centered_headline')
+                is_centered = 'center' in layout_hint
+                
+                from pptx.enum.text import PP_ALIGN
+                title_align = PP_ALIGN.CENTER if is_centered else PP_ALIGN.LEFT
+                
+                if page_type == 'template_content':
+                    # Add Top Decorative Line (More subtle)
+                    line = slide.shapes.add_shape(
+                        9, # MSO_SHAPE.LINE
+                        Inches(1), 
+                        Inches(0.4), 
+                        Inches(14), 
+                        Inches(0)
+                    )
+                    line.line.color.rgb = accent_color
+                    line.line.width = Pt(1.5)
+                    
+                    # 明确的引导标签 (Template Instruction Label)
+                    tag_box = slide.shapes.add_shape(1, Inches(1), Inches(0.55), Inches(1.5), Inches(0.3))
+                    tag_box.fill.solid()
+                    tag_box.fill.fore_color.rgb = accent_color
+                    tag_box.line.color.rgb = accent_color
+                    tf = tag_box.text_frame
+                    tf.text = "自由编辑页"
+                    p = tf.paragraphs[0]
+                    p.font.name = body_font
+                    p.font.size = Pt(12)
+                    p.font.bold = True
+                    p.font.color.rgb = hex_to_rgb('#FFFFFF')
+                    p.alignment = PP_ALIGN.CENTER
+                    from pptx.enum.text import MSO_ANCHOR
+                    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+                    
+                    # Add Title Placeholder
+                    title_box = slide.shapes.add_textbox(Inches(1), Inches(1.0), Inches(14), Inches(1.2))
+                    tf = title_box.text_frame
+                    tf.text = "单击此处输入您的标题"
+                    p = tf.paragraphs[0]
+                    p.font.name = title_font
+                    p.font.size = Pt(48)
+                    p.font.bold = True
+                    p.font.color.rgb = text_color
+                    p.alignment = PP_ALIGN.LEFT
+                    
+                    # Add Body Placeholder
+                    body_box = slide.shapes.add_textbox(Inches(1), Inches(2.5), Inches(14), Inches(5.5))
+                    tf = body_box.text_frame
+                    tf.text = "单击此处添加正文内容。您可以自由发挥。\n\n• 按下回车键可以添加新的段落\n• 使用这一页来补充 AI 没有覆盖到的重要细节\n• 所有的字体和颜色已经预设为您当前的主题风格"
+                    for p in tf.paragraphs:
+                        p.font.name = body_font
+                        p.font.size = Pt(22)
+                        p.font.color.rgb = secondary_text_color
+                        p.space_after = Pt(14)
+                        
+                elif page_type == 'template_split':
+                    # Add Top Decorative Line
+                    line = slide.shapes.add_shape(9, Inches(1), Inches(0.4), Inches(14), Inches(0))
+                    line.line.color.rgb = accent_color
+                    line.line.width = Pt(1.5)
+                    
+                    # 明确的引导标签 (Template Instruction Label)
+                    tag_box = slide.shapes.add_shape(1, Inches(1), Inches(0.55), Inches(1.8), Inches(0.3))
+                    tag_box.fill.solid()
+                    tag_box.fill.fore_color.rgb = accent_color
+                    tag_box.line.color.rgb = accent_color
+                    tf = tag_box.text_frame
+                    tf.text = "图文分栏页 (可编辑)"
+                    p = tf.paragraphs[0]
+                    p.font.name = body_font
+                    p.font.size = Pt(12)
+                    p.font.bold = True
+                    p.font.color.rgb = hex_to_rgb('#FFFFFF')
+                    p.alignment = PP_ALIGN.CENTER
+                    from pptx.enum.text import MSO_ANCHOR
+                    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+                    
+                    # Add Title Placeholder
+                    title_box = slide.shapes.add_textbox(Inches(1), Inches(1.0), Inches(14), Inches(1.2))
+                    tf = title_box.text_frame
+                    tf.text = "此处输入分栏排版标题"
+                    p = tf.paragraphs[0]
+                    p.font.name = title_font
+                    p.font.size = Pt(48)
+                    p.font.bold = True
+                    p.font.color.rgb = text_color
+                    p.alignment = PP_ALIGN.LEFT
+                    
+                    # Left Content Box (Text)
+                    left_box = slide.shapes.add_textbox(Inches(1), Inches(2.5), Inches(6.5), Inches(5.5))
+                    tf = left_box.text_frame
+                    tf.word_wrap = True
+                    tf.text = "此处添加正文说明\n\n您可以在左侧输入核心观点或数据描述，右侧插入相关图片或图表作为呼应。\n\n• 这种排版非常适合进行概念解释\n• 也可以用于对比说明"
+                    for p in tf.paragraphs:
+                        p.font.name = body_font
+                        p.font.size = Pt(22)
+                        p.font.color.rgb = secondary_text_color
+                        p.space_after = Pt(14)
+                            
+                    # Right Image Placeholder (Actual Picture Placeholder approach if possible, else nice shape)
+                    right_box = slide.shapes.add_shape(1, Inches(8.5), Inches(2.5), Inches(6.5), Inches(5.5))
+                    right_box.fill.solid()
+                    right_box.fill.fore_color.rgb = hex_to_rgb('#E8E8E8' if bg_lum > 128 else '#444444') # Neutral gray for image placeholder
+                    right_box.line.color.rgb = accent_color
+                    right_box.line.width = Pt(1)
+                    right_box.line.dash_style = 4 # Dashed to indicate "drop here"
+                    
+                    tf = right_box.text_frame
+                    tf.text = "🖼️\n\n删除此框并在此处插入您的图片\n(Insert > Picture)"
+                    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+                    for i, p in enumerate(tf.paragraphs):
+                        p.alignment = PP_ALIGN.CENTER
+                        p.font.name = body_font
+                        if i == 0: 
+                            p.font.size = Pt(48)
+                        else:
+                            p.font.size = Pt(16)
+                            p.font.bold = True
+                            p.font.color.rgb = hex_to_rgb('#666666' if bg_lum > 128 else '#CCCCCC')
 
             # Add Logo as a separate, movable PPTX shape (not burned into image)
             logo_path = slide_plan.get('logo_path')
@@ -539,6 +703,16 @@ Example:
                     ly = margin_y
 
                 slide.shapes.add_picture(logo_path, lx, ly, logo_w, logo_h)
+
+            # Add speaker notes logic moved up
+            speaker_notes = slide_plan.get('speaker_notes')
+            if speaker_notes:
+                try:
+                    notes_slide = slide.notes_slide
+                    text_frame = notes_slide.notes_text_frame
+                    text_frame.text = speaker_notes
+                except Exception as e:
+                    logger.warning(f"无法添加演讲者备注到第 {i+1} 页: {e}")
 
             # --- NEW: Add Multiple Native Images ---
             native_images = slide_plan.get('native_images', [])
@@ -700,16 +874,6 @@ Example:
                             os.remove(img_path)
                         except:
                             pass
-
-            # 添加演讲者备注 (Speaker Notes)
-            speaker_notes = slide_plan.get('speaker_notes')
-            if speaker_notes:
-                try:
-                    notes_slide = slide.notes_slide
-                    text_frame = notes_slide.notes_text_frame
-                    text_frame.text = speaker_notes
-                except Exception as e:
-                    logger.warning(f"无法添加演讲者备注到第 {i+1} 页: {e}")
 
         prs.save(output_path)
         logger.info(f"高级 PPTX 文件已保存: {output_path}")

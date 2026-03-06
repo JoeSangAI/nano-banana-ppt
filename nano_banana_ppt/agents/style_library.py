@@ -9,9 +9,9 @@ definition directly, ensuring consistent and high-quality results.
 STYLE_LIBRARY = {
     "claude_minimalist": {
         "aliases": ["claude", "claude风格", "克劳德风格", "claude minimalist", "claude minimal"],
-        "description": "Claude Minimalist style. Warm, intellectual, and approachable. Uses soft off-white/cream backgrounds, elegant typography mixing serif (for headings) and sans-serif (for body). Conveys a sense of calm, thoughtful AI assistance.",
+        "description": "Claude Minimalist style. Warm, intellectual, and approachable. Uses soft off-white/cream backgrounds, elegant typography mixing an old-style serif (e.g., Tiempos Text, Copernicus, or Georgia) for ALL headings/titles, and a clean sans-serif font (e.g., Suisse Intl, Inter) for body text. Conveys a sense of calm, thoughtful AI assistance.",
         "palette": ["#F9F8F6", "#2D2D2D", "#D97757", "#E6E2DD"],
-        "fonts": ["Tiempos", "Inter"],
+        "fonts": ["Tiempos Text / Copernicus / Georgia (for Headings ONLY)", "Suisse Intl / Inter (for Body ONLY)"],
         "shape_language": "Soft rounded corners, organic but structured, lots of negative space.",
         "imagery_style": "Minimalist, subtle textures, editorial illustration, warm lighting."
     },
@@ -42,7 +42,7 @@ STYLE_LIBRARY = {
     "liquid_glass": {
         "aliases": ["liquid glass", "glassmorphism", "毛玻璃", "液态玻璃", "bento", "便当盒"],
         "description": "Premium Liquid Glass / Glassmorphism style with Bento Grid layouts. High-end tech aesthetic. Semi-transparent frosted glass cards with ultra-thin borders and subtle drop shadows over an ethereal, soft-focus background.",
-        "palette": ["#F2F2F7", "#FFFFFF", "#8E8E93", "#007AFF", "#34C759"],
+        "palette": ["#F2F2F7", "#1D1D1F", "#8E8E93", "#007AFF", "#34C759"],
         "fonts": ["Inter", "Helvetica Neue"],
         "shape_language": "Rounded rectangles (Bento grids), asymmetrical grid layouts, frosted glass panels.",
         "imagery_style": "Soft caustics, ethereal light leaks, abstract fluid background, macro textures."
@@ -58,7 +58,7 @@ STYLE_LIBRARY = {
     "soft_3d_clay": {
         "aliases": ["soft 3d", "clay", "3d clay", "3d粘土", "粘土风", "马卡龙", "macaron", "cute"],
         "description": "Soft 3D Clay / Inflated style. Cute, friendly, and approachable. Uses soft pastel macaron colors and 3D rendered elements that look like inflated balloons or smooth matte clay.",
-        "palette": ["#FFB6C1", "#87CEFA", "#98FB98", "#FFE4B5", "#2F4F4F"],
+        "palette": ["#FDFBF7", "#2F4F4F", "#FFB6C1", "#87CEFA", "#98FB98", "#FFE4B5"],
         "fonts": ["Quicksand", "Nunito"],
         "shape_language": "Puffy, inflated, extremely rounded, pill shapes, soft and bouncy.",
         "imagery_style": "3D clay renders, matte surfaces, soft ambient occlusion lighting, pastel colors."
@@ -66,7 +66,7 @@ STYLE_LIBRARY = {
     "dark_luxury": {
         "aliases": ["dark luxury", "luxury", "黑金", "奢华", "黑金奢华", "premium"],
         "description": "Dark Luxury aesthetic. Premium, exclusive, and elegant. Deep charcoal or black backgrounds paired with rich gold, brass, or copper metallic accents. Conveys high net worth, exclusivity, and premium quality.",
-        "palette": ["#0D0D0D", "#1A1A1A", "#D4AF37", "#C5B358", "#F5F5F5"],
+        "palette": ["#0D0D0D", "#F5F5F5", "#D4AF37", "#C5B358", "#1A1A1A"],
         "fonts": ["Cinzel", "Optima", "Lato"],
         "shape_language": "Symmetrical, sharp geometric accents, thin gold lines, elegant framing.",
         "imagery_style": "Low-key lighting, metallic reflections, high contrast chiaroscuro, luxurious textures."
@@ -90,7 +90,7 @@ STYLE_LIBRARY = {
     "cyberpunk": {
         "aliases": ["cyberpunk", "赛博朋克", "赛博朋克风格", "tech neon"],
         "description": "Cyberpunk high-tech style. Dark, dystopian but vibrant. Deep navy/black backgrounds with neon cyan, magenta, and electric yellow accents. Features glitch effects, grid lines, and glowing UI elements.",
-        "palette": ["#0B0C10", "#45A29E", "#66FCF1", "#FF007F", "#F3E600"],
+        "palette": ["#0B0C10", "#E0E0E0", "#45A29E", "#66FCF1", "#FF007F", "#F3E600"],
         "fonts": ["JetBrains Mono", "Orbitron"],
         "shape_language": "Geometric, angled cuts, wireframe grids, glowing neon borders.",
         "imagery_style": "Neon lighting, glitch art, high-tech HUD overlays, dark alleyway moods."
