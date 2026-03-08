@@ -30,6 +30,126 @@ def _fix_black_corners(img: Image.Image, corner_ratio: float = 0.18, dark_thresh
     return img
 
 
+def _clamp(value: float, minimum: float, maximum: float) -> float:
+    return max(minimum, min(value, maximum))
+
+
+def _normalize_bbox(bbox: Dict) -> Optional[Dict[str, float]]:
+    if not bbox:
+        return None
+    try:
+        left = float(bbox.get("left", 0.0))
+        top = float(bbox.get("top", 0.0))
+        width = float(bbox.get("width", 0.0))
+        height = float(bbox.get("height", 0.0))
+    except (TypeError, ValueError):
+        return None
+
+    if width <= 0 or height <= 0:
+        return None
+
+    left = _clamp(left, 0.0, 1.0)
+    top = _clamp(top, 0.0, 1.0)
+    width = _clamp(width, 0.0, 1.0 - left)
+    height = _clamp(height, 0.0, 1.0 - top)
+    if width <= 0 or height <= 0:
+        return None
+
+    return {
+        "left": round(left, 4),
+        "top": round(top, 4),
+        "width": round(width, 4),
+        "height": round(height, 4),
+    }
+
+
+def _fit_bbox_within_region(candidate_bbox: Optional[Dict], allowed_bbox: Optional[Dict]) -> Optional[Dict[str, float]]:
+    allowed = _normalize_bbox(allowed_bbox)
+    if not allowed:
+        return _normalize_bbox(candidate_bbox)
+
+    candidate = _normalize_bbox(candidate_bbox) or allowed
+    width = min(candidate["width"], allowed["width"])
+    height = min(candidate["height"], allowed["height"])
+    max_left = allowed["left"] + allowed["width"] - width
+    max_top = allowed["top"] + allowed["height"] - height
+    left = _clamp(candidate["left"], allowed["left"], max_left)
+    top = _clamp(candidate["top"], allowed["top"], max_top)
+
+    return {
+        "left": round(left, 4),
+        "top": round(top, 4),
+        "width": round(width, 4),
+        "height": round(height, 4),
+    }
+
+
+def _bbox_overlap_area(a: Optional[Dict], b: Optional[Dict]) -> float:
+    box_a = _normalize_bbox(a)
+    box_b = _normalize_bbox(b)
+    if not box_a or not box_b:
+        return 0.0
+
+    ax2 = box_a["left"] + box_a["width"]
+    ay2 = box_a["top"] + box_a["height"]
+    bx2 = box_b["left"] + box_b["width"]
+    by2 = box_b["top"] + box_b["height"]
+    overlap_w = max(0.0, min(ax2, bx2) - max(box_a["left"], box_b["left"]))
+    overlap_h = max(0.0, min(ay2, by2) - max(box_a["top"], box_b["top"]))
+    return round(overlap_w * overlap_h, 6)
+
+
+def _lock_overlay_bbox(
+    original_image: Dict,
+    calculated_image: Optional[Dict],
+    blend_reserved_regions: List[Dict],
+) -> Dict:
+    merged_image = dict(original_image)
+    candidate_bbox = None
+    if calculated_image:
+        candidate_bbox = calculated_image.get("dynamic_bounding_box") or calculated_image.get("bounding_box")
+
+    allowed_bbox = (
+        original_image.get("overlay_allowed_region")
+        or original_image.get("bounding_box")
+        or candidate_bbox
+    )
+    locked_bbox = _fit_bbox_within_region(candidate_bbox, allowed_bbox)
+
+    if locked_bbox and any(_bbox_overlap_area(locked_bbox, reserved) > 0.0001 for reserved in blend_reserved_regions):
+        fallback_bbox = _normalize_bbox(original_image.get("bounding_box")) or _normalize_bbox(original_image.get("overlay_allowed_region"))
+        if fallback_bbox:
+            locked_bbox = fallback_bbox
+
+    if locked_bbox:
+        merged_image["dynamic_bounding_box"] = locked_bbox
+    return merged_image
+
+
+def _merge_native_images_with_locked_regions(native_images: List[Dict], calculated_overlay_images: List[Dict]) -> List[Dict]:
+    calculated_by_path = {
+        img.get("path"): img for img in calculated_overlay_images if img.get("path")
+    }
+    blend_reserved_regions = [
+        region
+        for region in (
+            _normalize_bbox(img.get("blend_reserved_region") or img.get("bounding_box"))
+            for img in native_images
+            if img.get("integration_mode", "overlay") == "blend"
+        )
+        if region
+    ]
+
+    merged_images = []
+    for image in native_images:
+        if image.get("integration_mode", "overlay") == "blend":
+            merged_images.append(dict(image))
+            continue
+        calc_image = calculated_by_path.get(image.get("path"))
+        merged_images.append(_lock_overlay_bbox(image, calc_image, blend_reserved_regions))
+    return merged_images
+
+
 class PPTGenerator:
     """PPT 生成器 - 核心工作流"""
     
@@ -74,11 +194,14 @@ class PPTGenerator:
         
         # Inject smart whitespace instructions based on native_images array
         if native_images and len(native_images) > 0:
-            areas = []
+            overlay_areas = []
+            blend_areas = []
             for idx, img_conf in enumerate(native_images):
                 layout = img_conf.get('layout')
                 bbox = img_conf.get('bounding_box')
+                integration_mode = img_conf.get('integration_mode', 'overlay')
                 
+                area_text = None
                 if bbox:
                     # Translate bounding box to natural language roughly
                     left_pct = int(bbox.get('left', 0) * 100)
@@ -94,7 +217,7 @@ class PPTGenerator:
                     else:
                         position = "the CENTER"
                         
-                    areas.append(f"a massive empty space on {position} (starting {left_pct}% from left, {top_pct}% from top, spanning {w_pct}% width)")
+                    area_text = f"a massive space on {position} (starting {left_pct}% from left, {top_pct}% from top, spanning {w_pct}% width)"
                 elif layout:
                     # Legacy fallback
                     layout_prompts = {
@@ -104,11 +227,21 @@ class PPTGenerator:
                         "bottom_right": "the BOTTOM RIGHT corner"
                     }
                     if layout in layout_prompts:
-                        areas.append(layout_prompts[layout])
+                        area_text = layout_prompts[layout]
+                
+                if area_text:
+                    if integration_mode == 'blend':
+                        blend_areas.append(area_text)
+                    else:
+                        overlay_areas.append(area_text)
             
-            if areas:
-                areas_str = " and ".join(areas)
+            if overlay_areas:
+                areas_str = " and ".join(overlay_areas)
                 tech_suffix += f" CRITICAL VISUAL CONSTRAINT: You ABSOLUTELY MUST leave {areas_str} completely BLANK and EMPTY. Do NOT generate ANY text, shapes, or complex backgrounds in this area. It must be a flat, solid color gradient because a photo will be pasted over it later."
+                
+            if blend_areas:
+                areas_str = " and ".join(blend_areas)
+                tech_suffix += f" CRITICAL VISUAL CONSTRAINT: You ABSOLUTELY MUST organically blend and redraw the reference image's subject in {areas_str}. Ensure the redrawn subject fits perfectly in that area, while leaving the rest of the slide clean for text."
 
 
 
@@ -719,11 +852,15 @@ Example:
             if not native_images and slide_plan.get('native_image'):
                 native_images = [slide_plan.get('native_image')]
 
-            # If we have native images and a generated background, use VLM to find exact placement
-            if native_images and img:
-                native_images = self._calculate_dynamic_layout(img, native_images)
+            # Only overlay images need placement. Blend images are already baked into the background.
+            overlay_images = [img_conf for img_conf in native_images if img_conf.get("integration_mode", "overlay") == "overlay"]
+            if overlay_images and img:
+                calculated_overlay_images = self._calculate_dynamic_layout(img, overlay_images)
+                native_images = _merge_native_images_with_locked_regions(native_images, calculated_overlay_images)
 
             for img_conf in native_images:
+                if img_conf.get("integration_mode", "overlay") == "blend":
+                    continue
                 img_path = img_conf.get('path')
                 
                 # Check if it's an http path that hasn't been resolved yet

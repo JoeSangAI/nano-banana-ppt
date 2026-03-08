@@ -103,6 +103,14 @@ def build_review_md(
         lines.append(f"- **标题**：{headline}")
         if subhead:
             lines.append(f"- **副标题**：{subhead}")
+        if page.get("visual_intent"):
+            lines.append(f"- **视觉意图**：{page.get('visual_intent')}")
+        if page.get("image_need_level"):
+            lines.append(f"- **配图强度**：{page.get('image_need_level')}")
+        if page.get("recommended_layout_family"):
+            lines.append(f"- **推荐布局**：{page.get('recommended_layout_family')}")
+        if page.get("image_selection_reason"):
+            lines.append(f"- **选图理由**：{page.get('image_selection_reason')}")
         
         # Metadata fields are omitted from review markdown to keep it clean for the user
         # They will still exist in the underlying data structure and plan.json
@@ -158,6 +166,8 @@ def build_review_md(
             for idx, img in enumerate(native_images):
                 path = img.get('path', 'unknown_path')
                 role = img.get('semantic_role', '')
+                mode = img.get('integration_mode', 'overlay')
+                mode_str = "[融合]" if mode == "blend" else "[叠加]"
                 bbox = img.get('bounding_box', {})
                 if bbox:
                     bbox_str = f"left: {bbox.get('left')}, top: {bbox.get('top')}, width: {bbox.get('width')}, height: {bbox.get('height')}"
@@ -177,7 +187,7 @@ def build_review_md(
                         path = abs_path
                 
                 img_src = f"file://{path}" if os.path.isabs(path) else path
-                lines.append(f"  {idx+1}. {role} <img src=\"{img_src}\" height=\"40\" style=\"vertical-align: middle;\" /> (`{bbox_str}`)")
+                lines.append(f"  {idx+1}. {mode_str} {role} <img src=\"{img_src}\" height=\"40\" style=\"vertical-align: middle;\" /> (`{bbox_str}`)")
             lines.append("")
 
         lines.append(f"- **配图/画面**：{visual_suggestion}")
@@ -258,6 +268,10 @@ def parse_review_md(md_text: str) -> Dict[str, Any]:
         subhead = ""
         narrative_role = ""
         one_takeaway = ""
+        visual_intent = ""
+        image_need_level = ""
+        recommended_layout_family = ""
+        image_selection_reason = ""
         lift_rate = ""
         body_format = "bullets"
         body = []
@@ -277,6 +291,18 @@ def parse_review_md(md_text: str) -> Dict[str, Any]:
                 in_native_images = False
             elif re.match(r"^-\s*\*\*副标题\*\*\s*[：:]\s*", line):
                 subhead = re.sub(r"^-\s*\*\*副标题\*\*\s*[：:]\s*", "", line).strip()
+                in_native_images = False
+            elif re.match(r"^-\s*\*\*视觉意图\*\*\s*[：:]\s*", line):
+                visual_intent = re.sub(r"^-\s*\*\*视觉意图\*\*\s*[：:]\s*", "", line).strip()
+                in_native_images = False
+            elif re.match(r"^-\s*\*\*配图强度\*\*\s*[：:]\s*", line):
+                image_need_level = re.sub(r"^-\s*\*\*配图强度\*\*\s*[：:]\s*", "", line).strip()
+                in_native_images = False
+            elif re.match(r"^-\s*\*\*推荐布局\*\*\s*[：:]\s*", line):
+                recommended_layout_family = re.sub(r"^-\s*\*\*推荐布局\*\*\s*[：:]\s*", "", line).strip()
+                in_native_images = False
+            elif re.match(r"^-\s*\*\*选图理由\*\*\s*[：:]\s*", line):
+                image_selection_reason = re.sub(r"^-\s*\*\*选图理由\*\*\s*[：:]\s*", "", line).strip()
                 in_native_images = False
             # 这些字段已在写入时被注释掉，但为了向后兼容解析，仍保留
             elif re.match(r"^-\s*\*\*叙事角色\*\*\s*[：:]\s*", line):
@@ -325,7 +351,15 @@ def parse_review_md(md_text: str) -> Dict[str, Any]:
                 # 兼容带有 file:// 协议和不带的普通路径
                 img_match = re.search(r"^(.*?)\s*<img src=\"(?:file://)?([^\"]+)\".*?\/>\s*\(`(?:bounding_box`:\s*)?(.*?)`?\)", re.sub(r"^\s*\d+\.\s+", "", line))
                 if img_match:
-                    role = img_match.group(1).strip()
+                    raw_role = img_match.group(1).strip()
+                    integration_mode = "overlay"
+                    if raw_role.startswith("[融合]"):
+                        integration_mode = "blend"
+                        role = raw_role[4:].strip()
+                    elif raw_role.startswith("[叠加]"):
+                        role = raw_role[4:].strip()
+                    else:
+                        role = raw_role
                     path = img_match.group(2).strip()
                     bbox_str = img_match.group(3).strip()
                     if bbox_str.endswith(')'): # handle optional backticks
@@ -339,20 +373,44 @@ def parse_review_md(md_text: str) -> Dict[str, Any]:
                 else:
                     img_match = re.search(r"!\[(.*?)\]\((.*?)\)\s*\(`bounding_box`:\s*(.*?)\)", line)
                     if img_match:
-                        role = img_match.group(1).strip()
+                        raw_role = img_match.group(1).strip()
+                        integration_mode = "overlay"
+                        if raw_role.startswith("[融合]"):
+                            integration_mode = "blend"
+                            role = raw_role[4:].strip()
+                        elif raw_role.startswith("[叠加]"):
+                            role = raw_role[4:].strip()
+                        else:
+                            role = raw_role
                         path = img_match.group(2).strip()
                         bbox_str = img_match.group(3).strip()
                     else:
                         img_match = re.search(r"\[([^\]]+)\]\(([^)]+)\)\s*->\s*(.*?)\s*\(`bounding_box`:\s*(.*?)\)", line)
                         if img_match:
                             path = img_match.group(2).strip()
-                            role = img_match.group(3).strip()
+                            raw_role = img_match.group(3).strip()
+                            integration_mode = "overlay"
+                            if raw_role.startswith("[融合]"):
+                                integration_mode = "blend"
+                                role = raw_role[4:].strip()
+                            elif raw_role.startswith("[叠加]"):
+                                role = raw_role[4:].strip()
+                            else:
+                                role = raw_role
                             bbox_str = img_match.group(4).strip()
                         else:
                             img_match = re.search(r"`([^`]+)`\s*->\s*(.*?)\s*\(`bounding_box`:\s*(.*?)\)", line)
                             if img_match:
                                 path = img_match.group(1).strip()
-                                role = img_match.group(2).strip()
+                                raw_role = img_match.group(2).strip()
+                                integration_mode = "overlay"
+                                if raw_role.startswith("[融合]"):
+                                    integration_mode = "blend"
+                                    role = raw_role[4:].strip()
+                                elif raw_role.startswith("[叠加]"):
+                                    role = raw_role[4:].strip()
+                                else:
+                                    role = raw_role
                                 bbox_str = img_match.group(3).strip()
                 
                 if img_match:
@@ -385,6 +443,7 @@ def parse_review_md(md_text: str) -> Dict[str, Any]:
                     native_images.append({
                         "path": path,
                         "semantic_role": role,
+                        "integration_mode": integration_mode,
                         "bounding_box": bbox
                     })
             elif "|" in line and re.match(r"^\|", line):
@@ -428,6 +487,14 @@ def parse_review_md(md_text: str) -> Dict[str, Any]:
             page_dict["narrative_role"] = narrative_role
         if one_takeaway:
             page_dict["one_takeaway"] = one_takeaway
+        if visual_intent:
+            page_dict["visual_intent"] = visual_intent
+        if image_need_level:
+            page_dict["image_need_level"] = image_need_level
+        if recommended_layout_family:
+            page_dict["recommended_layout_family"] = recommended_layout_family
+        if image_selection_reason:
+            page_dict["image_selection_reason"] = image_selection_reason
         if lift_rate:
             page_dict["lift_rate"] = lift_rate
         if native_images:

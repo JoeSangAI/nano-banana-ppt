@@ -11,7 +11,7 @@ Automates professional PowerPoint creation using Google's Nano Banana 2 (Gemini 
 2.  **Visual Prompt Engineering**: Sophisticated image generation prompts with style injection (using `VisualAgent`).
 3.  **Template Cloning**: Extract style, logo, and layout from existing PDF/PPTX templates (using `TemplateAgent`).
 4.  **AI Minting**: Automatically define and generate a cohesive visual style if no template is provided.
-5.  **Tables & Charts (Hybrid)**: Tables use **native PPT table** (editable in PowerPoint); charts (bar/line/pie) use rendered images.
+5.  **Charts, Infographics, and Editable Finishers**: Numeric data uses rendered charts (`bar` / `line` / `pie`), high-density structure can use `infographic`, and the final deck appends one pure-background helper slide plus two blank editable template slides for manual finishing when needed.
 
 ## 叙事与版面设计原则 (Narrative & Layout)
 
@@ -20,16 +20,17 @@ Automates professional PowerPoint creation using Google's Nano Banana 2 (Gemini 
 - **呼吸页 (breathing)**：适当穿插轻页面——一个问句、一个数字或半屏留白+过渡语，给听众 3–5 秒消化时间。
 - **密度交替**：信息页 ↔ 金句页 ↔ 数据页 ↔ 图/流程页，形成节奏。结合演讲内容自然交替，不为了节奏而节奏。
 - **抬机率设计**：穿插可拍照页（金句、翔实数据、框架图、公式、行动指引）。结尾优先放一句可拍照金句。
-- **表格 vs 图表**：精确对比用表格，趋势/比例用图表。避免同页同时塞满表格+图表。
+- **数据表达策略**：趋势/比例优先用图表；高密度结构优先用 `infographic`；如果必须保留原始表格，建议最终贴入系统附赠的空白模板页中手工整理。
 
-## Tables vs Charts (混合策略)
+## Data, Infographics, and Manual Tables
 
 | 类型 | 实现方式 | 特点 |
 |------|----------|------|
-| **表格** (visualization: table) | 原生 PPT 表格 | 可在 PPT 中直接编辑文字、调整列宽和样式 |
 | **图表** (visualization: bar/line/pie) | 图片渲染 | 由 Matplotlib 生成柱状/折线/饼图，风格与 style_config 一致 |
+| **信息图** (`infographic`) | AI 结构化排版 | 适合高密度信息、全景图、模块化框架 |
+| **原始表格保留** | 使用末尾两张空白模板页手工贴入 | 避免自动生成丑陋原生表格，同时保留编辑自由度 |
 
-表格样式由 `style_config` 驱动：主色、背景、字号（标题 18–24pt、正文 14–18pt）、列宽比例、表头底色与加粗、行间留白。
+**不要承诺原生表格自动生成。** 当前推荐路径是：把数据重构为图表或 infographic；如果用户明确要保留表格原貌，则在最终 PPT 里使用空白模板页手工补齐。
 
 ## 原生图片排版 (Native Images Semantic Layout)
 
@@ -57,6 +58,12 @@ You can directly use these high-quality curated styles by passing their names to
 - **`neo_brutalism`** (新粗野主义): Raw, bold, unapologetic. High contrast, stark backgrounds, bright accents, thick black borders, hard offset shadows.
 - **`japanese_aesthetic`** (日式美学): Zen, quiet, balanced. Muted earth tones, extreme negative space, asymmetrical balance.
 - **`apple_keynote`**: Premium, cinematic. Deep black backgrounds, massive white typography, glowing gradients.
+- **`liquid_glass`**: Premium glassmorphism with Bento Grid layouts and frosted translucent panels.
+- **`magazine_editorial`**: Fashion/editorial layout with dramatic whitespace and serif-led typography.
+- **`soft_3d_clay`**: Friendly inflated 3D clay aesthetic with soft pastel colors.
+- **`dark_luxury`**: Premium dark background with metallic gold accents.
+- **`traditional_chinese`**: Neo-Chinese aesthetic with ink wash, vermilion and jade accents.
+- **`holographic_chrome`**: Y2K holographic chrome and iridescent gradients.
 - **`cyberpunk`**: Dark, dystopian, high-tech. Deep navy/black with neon cyan, magenta, electric yellow.
 - **`academic_paper`**: Clean, authoritative. White background, classic serif typography, formal grid structure.
 
@@ -66,6 +73,7 @@ python3 -m nano_banana_ppt.main plan <content_file> [template_file] [logo_file] 
 ```
 - Analyzes content, parses template, generates narrative outline.
 - Saves **plan_for_review.md** (human-readable Markdown: 整体设计、各页类型/标题/内容/**演讲备注**/配图描述).
+- Stores all project assets under `output/ppt/<date>_<project_name>/`.
 - NarrativeAgent 会：精细拆解章节、将详实论述放入演讲备注、用 hero 页突出金句。支持多种正文形态（paragraph/bullets/data/quote/mixed）、呼吸页、副标题按需、抬机率设计。
 - Does NOT generate plan.json or visual prompts at this stage.
 - **Agent MUST present the outline (from terminal output or plan_for_review.md) to the user for confirmation before proceeding.**
@@ -82,12 +90,25 @@ python3 -m nano_banana_ppt.main execute <项目目录或plan_for_review.md> [out
 ### Agent Workflow (CRITICAL — follow this exact sequence):
 1. **Style Consultation (Interactive):** Before running any commands, ask the user if they have a preferred visual style. **Proactively list 3-4 relevant options** from the *Curated Style Library* (e.g., "Would you like a 'Claude Minimalist', 'Apple Keynote', or 'Liquid Glass' style?").
 2. Run `plan` with user's content file AND the selected `--style` (if any).
-3. **Present the slide outline to the user** (from terminal output or by reading `plan_for_review.md`).
-4. **Style Confirmation:** Remind the user they can still change the style by editing the `plan_for_review.md` file (refer to the "Style Inspirations" block in the file).
-5. **STOP. Wait for user confirmation.** Do NOT run `execute` in the same response/turn.
-6. **Only after the user explicitly says "确认" / "可以" / "开始生成" / "run execute"**, run `execute`.
+3. **The Co-pilot Question (NotebookLM Integration):**
+   - After running `plan` and generating `plan_for_review.md`, you SHOULD proactively ask the user: *"您现在生成了一版是我们这个 Skill 为您提供的叙事，那么您要不要同时也看一看 NotebookLM 原生的叙事会帮您怎么做？"*
+   - Simultaneously, you MUST append this reminder for the user:
+     - *(a) 如果您需要的话，可能需要重新去配置 NotebookLM 相关的后台接口。*
+     - *(b) 如果您没有配置过，可能还需要花 3 到 5 分钟左右时间。*
+     - *(c) 如果您已经配置过，请直接确认。*
+   - If user agrees:
+     - Use the `notebooklm-automation` skill (or raw `notebooklm` CLI if installed) to create a notebook, add the source file, and generate an outline (e.g., `generate report --format briefing-doc`).
+     - **DO NOT offer or generate podcasts, mind maps, or native PPTs here.** Those features belong ONLY in the standalone `notebooklm-automation` skill.
+     - Present both the native `plan_for_review.md` and the NotebookLM alternative outline (which MUST be saved into the same PPT project directory as a separate file, e.g., `output/ppt/<date>_<project_name>/notebooklm_outline.md`).
+     - Have the user interact and specify how to modify/fuse the outline. **CRITICAL:** Whatever the user decides, you must write the final chosen structure back into the native `plan_for_review.md` format before proceeding.
+   - If user declines: Proceed to next step.
+4. **Present the slide outline to the user** (from terminal output or by reading `plan_for_review.md`).
+5. **Style Confirmation:** Remind the user they can still change the style by editing the `plan_for_review.md` file (refer to the "Style Inspirations" block in the file).
+6. **STOP. Wait for user confirmation.** Do NOT run `execute` in the same response/turn.
+7. **Only after the user explicitly says "确认" / "可以" / "开始生成" / "run execute"**, run `execute`.
 
 **⛔ FORBIDDEN:** Running `plan` and `execute` back-to-back in one go. The human must review plan_for_review.md and confirm before any image generation begins.
+**⛔ FORBIDDEN:** Using NotebookLM's native `generate slide-deck` to skip the `execute` phase. The final presentation MUST be generated using the native `nano_banana_ppt` `execute` command for high-quality visuals.
 
 ### Legacy: One-shot auto mode (interactive terminal only)
 ```bash
@@ -103,8 +124,8 @@ python3 -m nano_banana_ppt.main auto <content_file> [template_file] [logo_file] 
 - `requests`
 
 ## Configuration
-- `OPENAI_API_KEY` or `GOOGLE_API_KEY`: Required.
-- `OPENAI_API_BASE`: Optional (defaults to Google's OpenAI-compatible endpoint).
+- `GOOGLE_API_KEY`: Recommended public configuration.
+- `OPENAI_API_KEY` / `OPENAI_API_BASE`: Optional compatibility path for advanced users, but do not present it as the default public setup.
 
 ## Common Mistakes & Red Flags
 
@@ -114,6 +135,7 @@ python3 -m nano_banana_ppt.main auto <content_file> [template_file] [logo_file] 
 | **Chaining plan→execute without confirmation** | User cannot review/edit plan before costly image generation | NEVER run execute in the same turn as plan. STOP after plan, present outline, wait for "确认" |
 | **Using .pptx as template** | May need LibreOffice for conversion | Prefer PDF templates, or ensure `soffice` is installed |
 | **Missing API Key** | Script failure | Ensure `GOOGLE_API_KEY` is set |
+| **Promising native editable tables** | User expects a feature the current pipeline no longer provides | Offer charts, infographic pages, or the final blank template slides for manual table insertion |
 | **Manual XML editing** | Corrupt files | Always use the script |
 | **Not providing Logo source** | No logo in output | Pass logo file alongside template |
 | **Running `execute` without `plan`** | Missing plan file | Always run `plan` first; execute needs plan_for_review.md or plan.json |

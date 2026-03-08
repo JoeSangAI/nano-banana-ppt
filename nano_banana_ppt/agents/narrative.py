@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 from openai import OpenAI
 
 from ..utils.llm_client import chat_completion_with_fallback, MODEL_FALLBACK_CHAIN
+from ..core.image_selector import ImageSelector
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -22,7 +23,8 @@ class NarrativeAgent:
             timeout=900.0,  # 900 seconds = 15 minutes, allowing ample time for deep reasoning
             max_retries=3
         )
-        self.model = "gemini-3.1-pro-preview" # 使用高智力模型进行逻辑规划
+        self.model = "gemini-3.1-pro-preview" # 用于提取深度蓝图
+        self.outline_model = "gemini-2.5-flash" # 用于大纲 JSON 生成，优先稳定性
 
     def collect_constraints(self) -> Dict:
         """
@@ -77,6 +79,39 @@ class NarrativeAgent:
             return json.loads(result)
         except Exception:
             return {}
+
+    def _enrich_outline_with_visual_decisions(self, outline: List[Dict], analyzed_images: List[Dict]) -> List[Dict]:
+        """
+        使用页面级自动选图器，对初始大纲做二次增强：
+        - 固化 visual_intent / image_need_level / recommended_layout_family
+        - 自动选择最适合的 native_images
+        """
+        if not outline:
+            return outline
+
+        selector = ImageSelector(self.client)
+        enriched = []
+        for page in outline:
+            decision = selector.select_images_for_page(page, analyzed_images)
+            merged = dict(page)
+            merged["visual_intent"] = decision.get("visual_intent", merged.get("visual_intent", "no_native_image"))
+            merged["image_need_level"] = decision.get("image_need_level", merged.get("image_need_level", "none"))
+            merged["recommended_layout_family"] = decision.get(
+                "recommended_layout_family",
+                merged.get("recommended_layout_family", "left_visual_right_text"),
+            )
+            merged["image_selection_reason"] = decision.get("selection_reason", "")
+            merged["image_selection_confidence"] = decision.get("confidence", 0)
+
+            # Prefer the auto-selected image list whenever confidence is decent.
+            selected_images = decision.get("native_images", [])
+            if selected_images and decision.get("confidence", 0) >= 55:
+                merged["native_images"] = selected_images
+            else:
+                merged.setdefault("native_images", [])
+
+            enriched.append(merged)
+        return enriched
 
     def extract_images_from_markdown(self, content: str, base_dir: str = None) -> List[str]:
         """
@@ -220,10 +255,29 @@ class NarrativeAgent:
         logger.info("✅ 深度叙事蓝图提取完成。")
         logger.info("🧠 Narrative Agent: 正在构建叙事架构 (Phase 2/2: 生成分页 JSON)...")
 
-        # 提取源文档中的图片
+        # 提取源文档中的图片，并使用多模态视觉过滤掉无用/不相关的图
         base_dir = os.path.dirname(os.path.abspath(content_file_path)) if content_file_path else None
-        source_images = self.extract_images_from_markdown(content_context, base_dir=base_dir)
-        source_images_str = "\n".join([f"- {img}" for img in source_images[:10]]) # 列出前10张作为参考
+        raw_source_images = self.extract_images_from_markdown(content_context, base_dir=base_dir)
+        
+        source_images = []
+        analyzed_images = []
+        if raw_source_images:
+            logger.info(f"🧠 Narrative Agent: 从源文档找到 {len(raw_source_images)} 张图片，正在进行语义过滤...")
+            selector = ImageSelector(self.client)
+            analyzed_images = selector.batch_analyze_images(raw_source_images)
+            
+            # 将有用的图片附带上它们的语义理解提供给模型，不再盲人摸象
+            for img_info in analyzed_images:
+                path = img_info.get("path", "")
+                summary = img_info.get("semantic_summary", "")
+                img_type = img_info.get("image_type", "unknown")
+                source_images.append(
+                    f"- 图片ID: {os.path.basename(path)}\n  类型: {img_type}\n  画面内容: {summary}"
+                )
+        else:
+            logger.info("🧠 Narrative Agent: 未从源文档找到有效图片")
+
+        source_images_str = "\n\n".join(source_images[:8]) # 供日志与后续 review 使用
         
         # 动态调整大纲结构要求
         page_count_constraint = constraints.get('page_count', '10')
@@ -242,7 +296,20 @@ class NarrativeAgent:
             structure_instruction = """
    - **逻辑节奏**：必须严格按照【深度叙事蓝图】来划分 PPT 的起承转合。"""
 
-        prompt = f"""你是一位顶尖的商业演示架构师（Presentation Architect）、TED 演讲教练与认知心理学专家。
+        outline_content_limit = 8000 if len(content_context) > 20000 else 16000
+        content_slice = content_context[:outline_content_limit]
+
+        def build_outline_prompt(content_excerpt: str, lightweight: bool = False) -> str:
+            lightweight_note = ""
+            if lightweight:
+                lightweight_note = """
+【轻量模式说明】
+- 当前请求处于稳定性优先模式。
+- 请优先保证输出合法完整的 JSON 数组。
+- 如有必要，减少页数密度，避免过细拆分。
+- 不要尝试输出过度复杂的图片规划，只需输出视觉意图、图片需求强度和推荐布局倾向。"""
+
+            return f"""你是一位顶尖的商业演示架构师（Presentation Architect）、TED 演讲教练与认知心理学专家。
 你的任务是将一份完整的【深度叙事蓝图】和对应的【输入原文】，转化为一套逻辑严密、节奏感强、视觉张力拉满的 PPT 逐页设计 JSON。
 请像 NotebookLM 等最聪明的 AI 一样，不仅提取信息，更懂得如何为演讲重塑信息。
 
@@ -259,12 +326,13 @@ class NarrativeAgent:
 {constraints.get('design_system', '')}
 
 【输入原文】 (用于提取详细的论据、金句、数据和案例)
-{content_context[:50000]} ... (内容过长已截断)
+{content_excerpt} ... (内容过长已截断)
 
 【可用素材图片 (Source Images)】
-我们已经通过视觉模型(VLM)提前过滤并识别了以下本地图片，它们与主题具有相关性。
-请你在规划页面时，**根据这里的“内容描述”来判断**，如果某张图非常适合作为当前页面的视觉证据，请加入 `native_images` 字段。
-{source_images_str}
+图片候选会在后续由“自动视觉导演”模块单独做页面级选图和模式判断。
+你在这里的首要任务不是精确挑图，而是先定义每页的**视觉意图**、**图片需求强度**与**推荐布局倾向**。
+除非某页必须强依赖图片才能成立，否则请不要在这里强行输出 `native_images`。
+{lightweight_note}
 
 【任务要求】
 1. **结构化与故事化 (Structure & Storytelling)**：{structure_instruction}
@@ -318,11 +386,11 @@ class NarrativeAgent:
         2. **文字型表格/对比**：必须重构为普通的文字排版（如 `comparison` 双列对比、`framework` 逻辑结构 或 `bullets` 极简要点），将核心内容提炼放入 `body` 数组中。
         3. **极度复杂的巨型表格（如报价单）**：如果表格过于复杂无法简化，将其处理为一页包含总结性文字的 `content` 页面，并在 `speaker_notes` 中明确提示：“【重要】原文此处包含复杂表格，建议演讲者后续截图手动粘贴至本页”。
         **绝对禁止使用 type 为 table 或 visualization 为 table/auto！**
-      - **原生图片智能排版 (Native Images Semantic Layout - VERY IMPORTANT)**：如果你判断原文中的某张本地图片与该页内容**强相关**（见上方"可用素材图片"列表），你**必须**在 JSON 中使用 `native_images` 字段来进行排版规划。
-     - 只有在你非常有把握这张图片代表什么，并且它适合这张 PPT 时才使用它。
-     - 为该页规划每个图片的绝对路径（path）和相对绝对坐标 `bounding_box`。
-     - `left`, `top`, `width`, `height` 取值范围均在 `0.0` 到 `1.0` 之间。请根据内容的多少和图片的预期比例（横图/竖图）给出合理的 `width` 和 `height`，确保图片不要变形或被拉伸得太离谱。例如，如果是脑部扫描图（可能是横图或方图），给它大约 `width: 0.4, height: 0.5` 的空间。
-     - **极度重要避让原则**：在 `visual_suggestion` 中，**必须明确写出**「请在画面[左侧/右侧/中间]留出大片纯净空白区域，用于放置原生图片」。如果不写，AI生成的文字会和原生图片严重重叠！
+      - **视觉导演字段 (Visual Auto-Director - VERY IMPORTANT)**：
+        - 为每页输出 `visual_intent`：可选值 `evidence|atmosphere|portrait|illustration|no_native_image`
+        - 为每页输出 `image_need_level`：可选值 `none|low|medium|high`
+        - 为每页输出 `recommended_layout_family`：可选值 `left_visual_right_text|right_visual_left_text|immersive_hero|top_visual_bottom_text|centered_headline`
+        - `native_images` 字段依然可以输出，但不是强制。后续自动视觉导演会基于这些字段和候选图做最终决定。
 
 【JSON 数据结构标准】
 [
@@ -334,6 +402,9 @@ class NarrativeAgent:
     "core_message": "本页试图让观众记住的唯一核心信息（供 AI 绘图或设计参考）",
     "narrative_role": "铺垫|证据|转折|高潮|结论|金句",
     "one_takeaway": "观众听完本页应记住的唯一一句话（10字内）",
+    "visual_intent": "evidence|atmosphere|portrait|illustration|no_native_image",
+    "image_need_level": "none|low|medium|high",
+    "recommended_layout_family": "left_visual_right_text|right_visual_left_text|immersive_hero|top_visual_bottom_text|centered_headline",
     "visualization": "bar/line/pie (仅在纯数值图表时填写，严禁使用table或auto)",
     "transition": "给演讲者的逻辑过渡提示（如何从上一页自然过渡到这一页）", 
     "text_content": {{
@@ -350,6 +421,7 @@ class NarrativeAgent:
         {{
             "path": "原文中提到的图片路径或描述链接",
             "semantic_role": "这张图的业务意图，例如：新产品主界面，占据左侧",
+            "integration_mode": "overlay", // "overlay" 或 "blend"
             "bounding_box": {{ "left": 0.05, "top": 0.2, "width": 0.4, "height": 0.6 }}
         }}
     ],
@@ -361,12 +433,17 @@ class NarrativeAgent:
 
 务必输出严格的、合法的 JSON 格式数组。绝不要包含 Markdown 代码块标记（如 ```json），直接从 [ 开始输出。不要截断！如果内容很长，请完整生成所有页面。"""
 
+        prompt = build_outline_prompt(content_slice, lightweight=False)
+
         max_retries = 2
         last_error = None
         for attempt in range(max_retries):
             try:
+                if attempt == 1:
+                    # Stability fallback: shorter input, simpler planning burden.
+                    prompt = build_outline_prompt(content_slice[: min(len(content_slice), 5000)], lightweight=True)
                 response = chat_completion_with_fallback(
-                    self.client, model=self.model, model_fallback=MODEL_FALLBACK_CHAIN,
+                    self.client, model=self.outline_model, model_fallback=MODEL_FALLBACK_CHAIN,
                     messages=[
                         {"role": "system", "content": "你是一个代表世界最高水平的演示文稿架构师。你擅长把复杂的文档切分为有节奏感的演讲幻灯片。必须且只能输出合法的 JSON 数组，严禁在前后添加任何 Markdown 代码块标记（如 ```json 等）或其它说明文本。"},
                         {"role": "user", "content": prompt}
@@ -380,7 +457,8 @@ class NarrativeAgent:
                 if start_idx != -1 and end_idx != -1:
                     content = content[start_idx:end_idx + 1]
                 
-                return json.loads(content)
+                outline = json.loads(content)
+                return self._enrich_outline_with_visual_decisions(outline, analyzed_images)
             except json.JSONDecodeError as e:
                 last_error = e
                 if attempt < max_retries - 1:
@@ -446,6 +524,8 @@ class NarrativeAgent:
                 for idx, img in enumerate(native_images):
                     path = img.get('path', 'unknown_path')
                     role = img.get('semantic_role', '')
+                    mode = img.get('integration_mode', 'overlay')
+                    mode_str = "[融合]" if mode == "blend" else "[叠加]"
                     bbox = img.get('bounding_box', {})
                     if bbox:
                         bbox_str = f"left: {bbox.get('left')}, top: {bbox.get('top')}, width: {bbox.get('width')}, height: {bbox.get('height')}"
@@ -454,7 +534,7 @@ class NarrativeAgent:
                     # 采用 HTML img 标签，可以在 Markdown 预览模式中直接显示小图，并隐藏长路径
                     import os
                     img_src = f"file://{path}" if os.path.isabs(path) else path
-                    preview_text += f"     {idx+1}. {role} <img src=\"{img_src}\" height=\"40\" style=\"vertical-align: middle;\" /> (`bounding_box`: {bbox_str})\n"
+                    preview_text += f"     {idx+1}. {mode_str} {role} <img src=\"{img_src}\" height=\"40\" style=\"vertical-align: middle;\" /> (`bounding_box`: {bbox_str})\n"
             
             preview_text += "\n"
             

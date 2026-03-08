@@ -1,9 +1,10 @@
 """
-LLM 调用工具：支持 429/503 时自动切换备用模型
+LLM 调用工具：支持 429/503/连接错误 时自动切换备用模型
 
 会话策略：
 - 429（配额耗尽）：任务内永久跳过该模型，因为配额窗口内无法恢复。
 - 503（临时高峰）：仅跳过本次调用，下次请求仍从主模型重试，因为 503 是暂时性的。
+- 连接错误 / timeout：仅跳过本次调用，下次请求仍从主模型重试。
 新任务（plan/execute 开始时）调用 reset_session() 重置 429 记忆。
 """
 import logging
@@ -62,6 +63,22 @@ def _is_quota_exceeded(e: Exception) -> bool:
     return _is_quota_exhausted(e) or _is_transient_unavailable(e)
 
 
+def _is_connection_error(e: Exception) -> bool:
+    """网络连接问题：本次跳过该模型，下次仍允许重试"""
+    err_str = str(e).lower()
+    keywords = [
+        "connection error",
+        "apiconnectionerror",
+        "timed out",
+        "timeout",
+        "connection reset",
+        "temporarily unavailable",
+        "eof occurred",
+        "ssl",
+    ]
+    return any(k in err_str for k in keywords)
+
+
 def chat_completion_with_fallback(
     client,
     model: Optional[str] = None,
@@ -69,10 +86,11 @@ def chat_completion_with_fallback(
     **kwargs,
 ):
     """
-    调用 chat.completions.create，遇 429 或 503 时自动切换备用模型。
+    调用 chat.completions.create，遇 429 / 503 / 连接错误 时自动切换备用模型。
 
     - 429（配额耗尽）：本模型加入 session 黑名单，任务内后续调用直接跳过。
     - 503（临时高峰）：本次跳过，不加黑名单，下次调用仍先尝试主模型。
+    - 连接错误：本次跳过，不加黑名单，下次调用仍先尝试主模型。
 
     Args:
         client: OpenAI 兼容客户端
@@ -117,6 +135,11 @@ def chat_completion_with_fallback(
                 # 503：仅跳过本次，不加黑名单
                 if i < len(effective_models) - 1:
                     logger.warning(f"⚠️ 模型 {m} 临时高峰 (503)，本次切换到: {effective_models[i + 1]}（下次仍会重试主模型）")
+                else:
+                    raise
+            elif _is_connection_error(e):
+                if i < len(effective_models) - 1:
+                    logger.warning(f"⚠️ 模型 {m} 连接错误，切换到: {effective_models[i + 1]}（下次仍会重试主模型）")
                 else:
                     raise
             else:

@@ -83,17 +83,44 @@ def _generate_single_slide(slide, visual_plan, slides_dir, generator, resolution
 
     is_background_only = slide.get('type') == 'background_only'
     
-    native_images = slide.get('native_images', [])
+    raw_native_images = slide.get('native_images', [])
     # Legacy fallback mapping
-    if not native_images and slide.get('native_image'):
-        native_images = [slide.get('native_image')]
+    if not raw_native_images and slide.get('native_image'):
+        raw_native_images = [slide.get('native_image')]
+
+    blend_images = []
+    # 架构大升级：全部放弃 overlay 硬贴图，统一转化为 blend (重绘/融合)
+    for ni in raw_native_images:
+        normalized = dict(ni)
+        # 强制将所有图片转为 blend，彻底摒弃丑陋的狗皮膏药贴图
+        normalized['integration_mode'] = 'blend'
+        if normalized.get("bounding_box") and not normalized.get("blend_reserved_region"):
+            normalized["blend_reserved_region"] = dict(normalized["bounding_box"])
+        blend_images.append(normalized)
+
+    if blend_images:
+        slide["native_images"] = blend_images
+
+    # 把融合图喂给 reference_images
+    for bi in blend_images:
+        try:
+            bi_img = Image.open(bi['path'])
+            if bi_img.mode != "RGB":
+                bi_img = bi_img.convert("RGB")
+            reference_images.append(bi_img)
+            
+            # 为重绘设定极强的 Prompt
+            role = bi.get('semantic_role', 'subject')
+            prompt += f"\n\nCRITICAL INSTRUCTION: We are REDRAWING the provided reference image ({role}). Do NOT just paste it. Seamlessly blend and redraw its essence, data structure, or subject into the background with high-end 3D/UI aesthetics. Ensure perfect color grading and lighting match. Do NOT duplicate or repeat the text/content from the reference image multiple times."
+        except Exception as e:
+            logger.warning(f"无法加载融合参考图 {bi['path']}: {e}")
     
     image = generator.generate_image(
         prompt, aspect_ratio="16:9",
         reference_images=reference_images,
         is_background_only=is_background_only,
         resolution=resolution,
-        native_images=native_images
+        native_images=blend_images # 传给 generator 以便生成带有排版意识的 prompt (例如留出左侧空间给重绘)
     )
     page_num = slide['page_num']
     slide_path = slides_dir / f"slide_{page_num:02d}.png"

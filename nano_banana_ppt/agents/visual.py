@@ -279,7 +279,19 @@ Ensure the palette has high contrast for text reading.
                     reference_image_path = list(refs.values())[0]
 
             # 2. Content-aware layout assignment
-            layout_name, layout_desc = self._assign_layout(page_type, text_content, prev_layout, page)
+            recommended_layout = page.get("recommended_layout_family")
+            layout_alias_map = {
+                "left_visual_right_text": "left_text_right_visual",
+                "right_visual_left_text": "split_screen_contrast",
+                "immersive_hero": "full_screen_immersive",
+                "top_visual_bottom_text": "top_visual_bottom_text",
+                "centered_headline": "centered_headline",
+            }
+            if recommended_layout:
+                layout_name = layout_alias_map.get(recommended_layout, recommended_layout)
+                layout_desc = self.LAYOUT_LIBRARY.get(layout_name, "Recommended layout from visual auto-director.")
+            else:
+                layout_name, layout_desc = self._assign_layout(page_type, text_content, prev_layout, page)
             prev_layout = layout_name
 
             # Task 3: Handle table/chart pages (DataVisualizer)
@@ -311,8 +323,22 @@ Ensure the palette has high contrast for text reading.
                     item_clean = item.lstrip('-•* ').strip()
                     render_text_block += f'Text {i+1}: "{item_clean}"\n'
             
-            # 4. Page Type Instruction
+            # 4. Page Type & Native Image Instruction
             type_instruction = self._get_page_type_specific_instruction(page_type)
+            
+            # Anti-hallucination constraint for native images
+            native_images = page.get('native_images', [])
+            has_blend = any(img.get('integration_mode') == 'blend' for img in native_images)
+            has_overlay = any(img.get('integration_mode', 'overlay') == 'overlay' for img in native_images)
+            
+            native_image_constraint = ""
+            if has_blend or has_overlay:
+                native_image_constraint = "\n\n【Native Image & Anti-Hallucination Constraints (EXTREMELY CRITICAL)】\n"
+                if has_blend:
+                    native_image_constraint += "1. A reference photo will be provided to BLEND into this scene. Your prompt MUST explicitly state: 'seamlessly blend the provided reference subject into the background environment'.\n"
+                    native_image_constraint += "2. **DO NOT INVENT EXTRA OBJECTS**: The image generation model has a tendency to hallucinate magazines, watches, advertisements, or people when given 'editorial' or 'premium' prompts. Your prompt MUST explicitly FORBID generating any objects, products, humans, or graphics that are not clearly described in the text content or visual suggestion. Tell the model to keep the environment strictly empty, abstract, or purely atmospheric around the main blended subject.\n"
+                if has_overlay:
+                    native_image_constraint += "3. A separate screenshot or graphic will be OVERLAID on top of the final image later. You MUST include an instruction to leave a massive, completely empty, clean safe zone (flat gradient or solid color, NO graphics, NO text, NO objects) for this overlay.\n"
 
             # 5. Build prompt
             system_prompt = "You are an expert Prompt Engineer for Nano Banana 2 (Gemini Image). Your top priority is maintaining strict visual and typographic consistency across all generated slides."
@@ -335,6 +361,7 @@ Ensure the palette has high contrast for text reading.
 - Do NOT reproduce ANY text visible in the reference image that is not listed in the TEXT CONTENT section below.
 - Do NOT translate any Chinese text. Render it exactly as provided.
 - Do NOT add decorative text, watermarks, or labels not in the TEXT CONTENT section.
+- Do NOT repeat the exact same text multiple times. If the text content has two bullet points, do NOT render them four times. Avoid hallucinating duplicate text blocks.
 - Do NOT use random, inconsistent fonts. Typography MUST strictly adhere to the defined font families and weights in the Global Style."""
 
             user_prompt = f"""Generate a high-fidelity image generation prompt for a PPT slide.
@@ -357,7 +384,7 @@ The "Initial Visual Suggestion" above describes the desired metaphor or object.
 You MUST ADAPT the subject matter/metaphor from the Initial Visual Suggestion so that it is rendered STRICTLY in the exact aesthetic of the Global Style and Color Palette. 
 For example, if the Suggestion says "a bright sunny corporate office" but the Global Style is "Cyberpunk Dark Neon", you MUST generate "a cyberpunk dark neon corporate office with glowing accents". 
 The Global Style ALWAYS OVERRIDES the stylistic implications of the Initial Visual Suggestion.
-
+{native_image_constraint}
 【Instruction】
 1. **{type_instruction}**
 2. Describe the visual scene in detail (background, shapes, decorative elements).

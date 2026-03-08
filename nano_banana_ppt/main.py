@@ -125,8 +125,28 @@ def generate_plan(content_file: str, template_file: str = None,
         print(f"❌ 错误: 内容文件不存在 {content_file}")
         return None
 
-    with open(content_file, 'r', encoding='utf-8') as f:
-        content_context = f.read()
+    # 支持 PDF：用 PyMuPDF 提取文本；否则按 UTF-8 文本读取
+    if content_file.lower().endswith('.pdf'):
+        try:
+            import fitz  # PyMuPDF
+            doc = fitz.open(content_file)
+            parts = []
+            for page in doc:
+                parts.append(page.get_text())
+            num_pages = len(doc)
+            doc.close()
+            content_context = "\n\n".join(parts)
+            if not content_context.strip():
+                print("❌ 错误: PDF 中未提取到文本，请检查文件或改用已导出的 .md/.txt")
+                return None
+            logger.info(f"已从 PDF 提取 {num_pages} 页文本")
+        except Exception as e:
+            logger.error(f"PDF 文本提取失败: {e}")
+            print(f"❌ 错误: PDF 读取失败 ({e})，请确认已安装 pymupdf: pip install pymupdf")
+            return None
+    else:
+        with open(content_file, 'r', encoding='utf-8') as f:
+            content_context = f.read()
 
     # Step 1: 自动推导
     print("\n🔍 [Step 1/4] 正在分析文档内容...")
