@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v3.0.0] - 2026-03-08
+
+🔥 **史诗级架构更新：Visual Auto-Director (视觉自动导演) 上线**
+
+本次更新彻底重构了 PPT 生成过程中的视觉处理与排版架构，从根本上解决了 AI 生成幻灯片时“贴图生硬”、“内容胡乱生成”和“网络不稳定”的三大痛点。
+
+### ✨ 核心特性 (Core Features)
+
+*   **多模态图库安检 (Image Selector)**：
+    *   新增 `image_selector.py` 组件。系统现在会像人类编辑一样，在生成前对所有传入的参考图片进行 VLM (视觉语言模型) 语义打分和过滤。
+    *   **强力去噪**：自动精准拦截包含二维码 (QR Code)、牛皮癣广告、低质网图等 junk images，保证后续生成的极高纯净度。
+*   **全融合重绘架构 (All-Blend Redraw)**：
+    *   彻底废弃了以往粗糙的 `overlay` (用 Python 在背景上计算方框硬贴原图) 逻辑。
+    *   现在，所有通过安检的非图表类配图，都会被强制设为 `blend` 模式。系统会将原图作为 `reference_image` 投喂给生图大模型，要求其在保持原主体/数据隐喻的基础上，以统一的高级 3D/UI 质感进行**光影级别的自然重绘与融合**，彻底告别“狗皮膏药”。
+*   **高压防幻觉约束 (Anti-Hallucination & Anti-Duplication Prompt)**：
+    *   在 `VisualAgent` 的生图提示词中注入了极严格的负向约束。
+    *   **防加戏**：明确禁止大模型在高端商务/社论风格下随意臆想并生成手表、杂志、不相关的人物或品牌 Logo。
+    *   **防复读机**：针对文本排版，明确禁止大模型将同一句话或同一个要点在画面中重复渲染多次（如原本只有 2 个 bullet points，大模型却画了 4 个），强制要求点到为止。
+*   **高可用自动退避机制 (LLM Fallback & Retry)**：
+    *   重写了底层 `llm_client.py`，新增对 `APIConnectionError`、`Timeout` 等瞬态网络异常的全局捕获。
+    *   当遭遇并发限流 (429) 或服务不可用 (503) 时，系统将自动降级切换至备用模型（如 `gemini-2.5-flash` 或备用通道），彻底解决长文生图时跑到 80% 突然崩溃前功尽弃的痛点。
+
+### 🚀 优化 (Optimizations)
+
+*   大幅优化了 `NarrativeAgent` 在生成逐页 JSON 计划（Phase 2）时的长文本截断逻辑（`outline_content_limit` 从 16000 降至 8000），在保证上下文连贯的前提下，极大地减轻了 LLM 输出大段 JSON 时的掉线率。
+
 ## [v2.5.2] - 2026-03-06
 
 ### ✨ 新特性 (New Features)
