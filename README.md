@@ -105,6 +105,12 @@ python3 -m nano_banana_ppt.main upscale output/ppt/your_project_dir --resolution
 
 详细更新请查看 [CHANGELOG.md](./CHANGELOG.md) 
 
+### [v3.0.0] - 2026-03-08
+*   🔥 **全融合视觉架构 (Visual Auto-Director)**: 废弃粗糙的图片硬贴 (overlay) 逻辑，全量引入**光影重绘融合 (All-Blend Redraw)**，让配图高级无缝地融入背景。
+*   🛡️ **多模态图库安检 (Image Selector)**: 生图前自动精准拦截二维码、牛皮癣广告和低质图片。
+*   🧠 **高压防幻觉约束**: 注入极其严格的负向提示词，禁止大模型胡乱臆想（如乱加手表/杂志），并彻底杜绝文本“复读机”行为。
+*   🔄 **高可用自动退避 (LLM Fallback)**: 遇 API 报错超时自动降级重试，解决长文生图“跑到一半全盘崩溃”的痛点。
+
 ### [v2.5.2] - 2026-03-06
 *   ✨ **真·PPT模板页生成**: 每次生成 PPT 会在末尾追加两张（单栏/双栏图文）带有真实原生边框、标签与可编辑文本框的「空白模板页」。
 *   🐛 **对比度智能保护**: 修复浅色背景下浅色占位文本“隐形”的 Bug，引入文字与背景亮度实时校验（Luminance Contrast）算法。
