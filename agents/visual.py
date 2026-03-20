@@ -363,6 +363,41 @@ Ensure the palette has high contrast for text reading.
                 for i, item in enumerate(text_content['body']):
                     item_clean = item.lstrip('-•* ').strip()
                     render_text_block += f'  {i+1}. "{item_clean}"\n'
+
+            # 表格内容必须完整渲染
+            # table_data 可能存在于 text_content 里，也可能直接在 page 根级别
+            table_data = text_content.get('table_data') or page.get('table_data')
+            if table_data:
+                render_text_block += "\nTable Data (MUST be fully rendered with ALL rows and columns):\n"
+                # 支持三种格式：
+                # 1. {headers: [...], rows: [[...], [...]]} - 标准格式
+                # 2. [{...}, {...}] - list of dicts
+                # 3. [[...], [...]] - list of lists (第一行是表头)
+                # 4. 字符串格式
+                if isinstance(table_data, dict) and 'headers' in table_data and 'rows' in table_data:
+                    # 标准格式 {headers: [...], rows: [[...], [...]]}
+                    headers = table_data['headers']
+                    render_text_block += "Columns: " + " | ".join(headers) + "\n"
+                    for row_idx, row in enumerate(table_data['rows']):
+                        row_str = " | ".join([str(cell) for cell in row])
+                        render_text_block += f"Row {row_idx+1}: {row_str}\n"
+                elif isinstance(table_data, list) and len(table_data) > 0:
+                    if isinstance(table_data[0], dict):
+                        # 列表 of dicts - 获取列名
+                        headers = list(table_data[0].keys())
+                        render_text_block += "Columns: " + " | ".join(headers) + "\n"
+                        for row_idx, row in enumerate(table_data):
+                            row_values = [str(row.get(h, '')) for h in headers]
+                            render_text_block += f"Row {row_idx+1}: " + " | ".join(row_values) + "\n"
+                    elif isinstance(table_data[0], list):
+                        # 列表 of lists - 第一个是表头
+                        for row_idx, row in enumerate(table_data):
+                            row_str = " | ".join([str(cell) for cell in row])
+                            prefix = "Header" if row_idx == 0 else f"Row {row_idx}"
+                            render_text_block += f"{prefix}: {row_str}\n"
+                elif isinstance(table_data, str):
+                    render_text_block += table_data
+                render_text_block += "[END TABLE]\n"
             
             # 4. Page Type & Native Image Instruction
             type_instruction = self._get_page_type_specific_instruction(page_type)
@@ -439,7 +474,8 @@ Ensure the palette has high contrast for text reading.
 - Do NOT translate any Chinese text. Render it exactly as provided.
 - Do NOT add decorative text, watermarks, or labels not in the TEXT CONTENT section.
 - Do NOT repeat the exact same text multiple times. If the text content has two bullet points, do NOT render them four times. Avoid hallucinating duplicate text blocks.
-- Do NOT use random, inconsistent fonts. Typography MUST strictly adhere to the defined font families and weights in the Global Style.{manifesto_ban}"""
+- Do NOT use random, inconsistent fonts. Typography MUST strictly adhere to the defined font families and weights in the Global Style.
+- **TABLE RENDERING (CRITICAL)**: If a table is present in the TEXT CONTENT section, you MUST render the COMPLETE table with ALL rows and ALL columns. Do NOT summarize, truncate, or omit any row or column. Each cell's text must be clearly legible. The table should occupy a significant portion of the slide layout.{manifesto_ban}"""
 
             if self.prompt_mode == "minimal":
                 # Minimal mode: simplified prompt structure

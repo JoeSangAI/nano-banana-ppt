@@ -22,15 +22,20 @@ Automates professional PowerPoint creation using Google's Nano Banana 2 (Gemini 
 - **抬机率设计**：穿插可拍照页（金句、翔实数据、框架图、公式、行动指引）。结尾优先放一句可拍照金句。
 - **数据表达策略**：趋势/比例优先用图表；高密度结构优先用 `infographic`；如果必须保留原始表格，建议最终贴入系统附赠的空白模板页中手工整理。
 
-## Data, Infographics, and Manual Tables
+## Data, Infographics, and Tables
 
 | 类型 | 实现方式 | 特点 |
 |------|----------|------|
 | **图表** (visualization: bar/line/pie) | 图片渲染 | 由 Matplotlib 生成柱状/折线/饼图，风格与 style_config 一致 |
 | **信息图** (`infographic`) | AI 结构化排版 | 适合高密度信息、全景图、模块化框架 |
-| **原始表格保留** | 使用末尾两张空白模板页手工贴入 | 避免自动生成丑陋原生表格，同时保留编辑自由度 |
+| **表格** (table_data) | AI 图片渲染 | 支持完整还原多行多列表格数据，通过 prompt 约束确保所有行列被完整呈现 |
 
-**不要承诺原生表格自动生成。** 当前推荐路径是：把数据重构为图表或 infographic；如果用户明确要保留表格原貌，则在最终 PPT 里使用空白模板页手工补齐。
+**表格渲染支持格式：**
+- `{headers: [...], rows: [[...], [...]}` — 标准格式（推荐）
+- `[{...}, {...}]` — list of dicts
+- `[[...], [...]]` — list of lists (第一行为表头)
+
+**表格渲染约束：** 在 visual prompt 中添加了 `TABLE RENDERING (CRITICAL)` 约束，要求模型完整渲染所有行列，不得省略或摘要。
 
 ## 原生图片排版 (Native Images Semantic Layout)
 
@@ -98,10 +103,11 @@ python3 -m nano_banana_ppt.main execute <project_dir_or_plan_md> [output_name] [
 - Generates images via Gemini, assembles `.pptx`.
 
 ### Agent Workflow (CRITICAL — follow this exact sequence):
-1. **Style Consultation (Interactive):** Before running any commands, ask the user if they have a preferred visual style. **Proactively list 3-4 relevant options** from the *Curated Style Library* (e.g., "Would you like a 'Claude Minimalist', 'Apple Keynote', or 'Liquid Glass' style?").
-2. Run `plan` with user's content file AND the selected `--style` (if any).
-3. **The Co-pilot Question (NotebookLM Integration):**
-   - After running `plan` and generating `content_plan.md`, you SHOULD proactively ask the user: *"您现在生成了一版是我们这个 Skill 为您提供的叙事，那么您要不要同时也看一看 NotebookLM 原生的叙事会帮您怎么做？"*
+
+#### ── GATE 1: Content Plan ──
+1. Run `plan-content` with the user's content file (no style argument yet).
+2. **The Co-pilot Question (NotebookLM Integration):**
+   - After `plan-content` completes, you SHOULD proactively ask the user: *"您现在生成了一版是我们这个 Skill 为您提供的叙事，那么您要不要同时也看一看 NotebookLM 原生的叙事会帮您怎么做？"*
    - Simultaneously, you MUST append this reminder for the user:
      - *(a) 如果您需要的话，可能需要重新去配置 NotebookLM 相关的后台接口。*
      - *(b) 如果您没有配置过，可能还需要花 3 到 5 分钟左右时间。*
@@ -112,13 +118,22 @@ python3 -m nano_banana_ppt.main execute <project_dir_or_plan_md> [output_name] [
      - Present both the native `content_plan.md` and the NotebookLM alternative outline (which MUST be saved into the same PPT project directory as a separate file, e.g., `output/ppt/<date>_<project_name>/notebooklm_outline.md`).
      - Have the user interact and specify how to modify/fuse the outline. **CRITICAL:** Whatever the user decides, you must write the final chosen structure back into the native `content_plan.md` format before proceeding.
    - If user declines: Proceed to next step.
-4. **Present the outline and manifesto to the user** (from terminal output or by reading `visual_plan.md`). Ensure the Art Director's Cliche Avoidance and Theme rules are visible to the user.
-5. **Style Confirmation & Prototype Offer:** Remind the user they can still change the style by editing the `visual_plan.md` file. **Crucially, ask the user if they want to prototype 1-2 slides (`prototype` command) to confirm the visual style before executing the full deck.**
-6. **STOP. Wait for user confirmation.** Do NOT run `execute` or `prototype` in the same response/turn.
-7. **If the user wants to prototype**, run the `prototype` command and **STOP again**. Wait for the user to review the generated slides.
-8. **Only after the user explicitly approves the prototype or plan (e.g., "确认" / "可以" / "开始生成" / "run execute")**, run `execute`.
+3. **Present `content_plan.md` to the user.** Show the slide-by-slide outline (page number, type, headline, body summary).
+4. **⛔ STOP — GATE 1.** Do NOT run `plan-visual` yet. Wait for the user to explicitly confirm the content outline (e.g., "内容没问题" / "确认" / "可以"). The user may edit `content_plan.md` before confirming.
 
-**⛔ FORBIDDEN:** Running `plan` and `execute` back-to-back in one go. The human must review content_plan.md and visual_plan.md and confirm before any image generation begins.
+#### ── GATE 2: Visual Plan ──
+5. **Style Consultation:** Only after GATE 1 is confirmed, ask the user if they have a preferred visual style. **Proactively list 3-4 relevant options** from the *Curated Style Library* (e.g., "Would you like a 'Claude Minimalist', 'Apple Keynote', or 'Liquid Glass' style?").
+6. Run `plan-visual <project_dir>` with the selected `--style` (if any).
+7. **Present `master_plan.md` to the user.** Show the Art Director's Manifesto (visual style, palette, cliché avoidance rules) and the per-slide visual descriptions.
+8. **⛔ STOP — GATE 2.** Do NOT run `execute` or `prototype` yet. Wait for the user to explicitly confirm the visual plan. Remind the user they can edit `master_plan.md` directly to adjust any slide's visual description before proceeding.
+
+#### ── Prototype & Execute ──
+9. **Prototype Offer:** Ask the user if they want to run `prototype` to preview 1-2 slides before generating the full deck.
+10. **If the user wants to prototype**, run `prototype <project_dir>` and **STOP again**. Wait for the user to review the generated slides.
+11. **Only after the user explicitly approves** (e.g., "确认" / "可以" / "开始生成" / "run execute"), run `execute`.
+
+**⛔ FORBIDDEN:** Running `plan-content` and `plan-visual` in the same turn without waiting for GATE 1 confirmation.
+**⛔ FORBIDDEN:** Running `plan-visual` and `execute` in the same turn without waiting for GATE 2 confirmation.
 **⛔ FORBIDDEN:** Using NotebookLM's native `generate slide-deck` to skip the `execute` phase. The final presentation MUST be generated using the native `nano_banana_ppt` `execute` command for high-quality visuals.
 
 ### Legacy: One-shot auto mode (interactive terminal only)
@@ -142,8 +157,10 @@ python3 -m nano_banana_ppt.main auto <content_file> [template_file] [logo_file] 
 
 | Mistake | Consequence | Fix |
 |---------|-------------|-----|
-| **Skipping Phase 1 review** | User gets unwanted content | ALWAYS show visual_plan.md outline to user and wait for confirmation before execute |
-| **Chaining plan→execute without confirmation** | User cannot review/edit plan before costly image generation | NEVER run execute in the same turn as plan. STOP after plan, present outline, wait for "确认" |
+| **Skipping GATE 1 (content review)** | User gets unwanted content structure | Run `plan-content`, present `content_plan.md`, STOP and wait for confirmation before running `plan-visual` |
+| **Skipping GATE 2 (visual review)** | User cannot review visual style before costly image generation | Run `plan-visual`, present `master_plan.md`, STOP and wait for confirmation before running `execute` |
+| **Asking style preference before content is confirmed** | Premature style decision before user has seen the outline | Ask style only AFTER GATE 1 is confirmed |
+| **Chaining plan-content→plan-visual→execute without stops** | User bypassed on both review gates | Each gate requires explicit user confirmation — never chain all three in one turn |
 | **Using .pptx as template** | May need LibreOffice for conversion | Prefer PDF templates, or ensure `soffice` is installed |
 | **Missing API Key** | Script failure | Ensure `GOOGLE_API_KEY` is set |
 | **Promising native editable tables** | User expects a feature the current pipeline no longer provides | Offer charts, infographic pages, or the final blank template slides for manual table insertion |
