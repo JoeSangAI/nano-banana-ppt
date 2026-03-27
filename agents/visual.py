@@ -457,6 +457,15 @@ Ensure the palette has high contrast for text reading.
 
             manifesto_ban = "\n- ENFORCE MANIFESTO BANS: Avoid the specific clichéd elements listed in 'Cliche Avoidance' (e.g., glowing brains, 3D funnels). Note: this does NOT ban people, architecture, nature, or real-world objects — those are encouraged for visual richness." if manifesto else ""
 
+            # Warning for empty visual_suggestion
+            vb_empty_warning = (
+                "\n[WARNING: This slide's User-Confirmed Visual Description is EMPTY. "
+                "Generate a suitable visual that matches the page's semantic content and type, "
+                "using the headline, body, and one_takeaway as your guide. "
+                "Do NOT leave the visual field blank or generic.]"
+                if not visual_suggestion.strip() else ""
+            )
+
             if self.prompt_mode == "minimal":
                 # Minimal mode: only essential constraints
                 neg_constraints = f"""【Key Guidelines】
@@ -486,9 +495,9 @@ Ensure the palette has high contrast for text reading.
 {prompt_mode}
 {seed_guidance}
 
-【Current Slide】
+【Current Slide (USER-CONFIRMED — STRICTLY FOLLOW)】
 - Page Type: {page_type.upper()}
-- Visual Direction: {visual_suggestion}
+- User-Confirmed Visual: {visual_suggestion if visual_suggestion.strip() else "(empty — generate matching visual)"}
 - Layout: {layout_name}
 
 {render_text_block}
@@ -510,16 +519,17 @@ Output the final image-generation prompt directly."""
 【Global Context (For Consistency)】
 {outline_summary}
 
-【CURRENT PAGE TARGET】
+【CURRENT PAGE TARGET (USER-CONFIRMED — STRICTLY FOLLOW)】
 - Section: {page.get('section_title', 'General')}
 - Page Type: {page_type.upper()}
-- Initial Visual Suggestion: {visual_suggestion}
+- User-Confirmed Visual Description: {visual_suggestion}
 
-【STYLE & SEMANTIC ADAPTATION RULE (CRITICAL)】
-1. You MUST apply the Global Style (especially the exact Color Palette, lighting, and textures) to the scene.
-2. HOWEVER, the layout and structural metaphor MUST adapt organically to the specific text content and Initial Visual Suggestion.
-3. If the page is a "flowchart", "comparison", or describes a specific metaphor (like a flywheel or pyramid), you must draw that specific semantic structure.
-4. DO NOT force text into rigid, generic boxes or bento grids unless specifically requested. Allow the visual elements to form dynamically around the text's meaning while strictly wearing the "skin" of the Global Style.
+【VISUAL DESCRIPTION CONSTRAINT (CRITICAL — NON-NEGOTIABLE)】
+The "User-Confirmed Visual Description" above is the EXACT visual the user has approved for this slide. You MUST follow it precisely. DO NOT deviate, interpret, or "improve" this description — the user has already made the creative decision. Your job is to:
+1. Apply the Global Style (colors, fonts, lighting, texture) to render this exact scene
+2. Adapt the layout/placement only to fit the text content
+3. NEVER substitute a different visual metaphor unless the confirmed description is physically impossible (e.g., describes a non-existent scene)
+{vb_empty_warning if not visual_suggestion.strip() else ""}
 
 【VISUAL DIVERSITY RULE (CRITICAL)】
 5. Each slide MUST feature a visually DISTINCT primary subject. Do NOT reuse the same visual motif (e.g., stone monolith, glass panel, abstract cube) across consecutive slides.
@@ -569,6 +579,23 @@ Directly output the final image-generation Prompt string. No explanation."""
                 )
                 final_prompt = response.choices[0].message.content.strip()
 
+                # 输出验证：检查并清理禁止的格式标记
+                forbidden_patterns = [
+                    (r'```', 'markdown code block'),
+                    (r'\*\*[^*]+\*\*', 'markdown bold'),
+                    (r'\*[^*]+\*', 'markdown italic'),
+                    (r'^[-•*]\s', 'bullet marker at line start'),
+                    (r'#{1,6}\s', 'markdown heading'),
+                ]
+                cleaned_prompt = final_prompt
+                for pattern, desc in forbidden_patterns:
+                    if re.search(pattern, cleaned_prompt, re.MULTILINE):
+                        cleaned_prompt = re.sub(pattern, '', cleaned_prompt, flags=re.MULTILINE)
+                        logger.warning(f"⚠️ P{pnum} 已清理禁止格式 ({desc})，已自动修复")
+
+                # 清理多余空行
+                cleaned_prompt = re.sub(r'\n{3,}', '\n\n', cleaned_prompt)
+                final_prompt = cleaned_prompt.strip()
                 plan_item = page.copy()
                 plan_item['visual_prompt'] = final_prompt
                 plan_item['reference_image'] = task['reference_image_path']
