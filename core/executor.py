@@ -19,6 +19,10 @@ from tools.nano_banana_ppt.core.data_visualizer import render_chart_image
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# 页面类型家族常量
+CONTENT_FAMILY = {'content', 'framework', 'flowchart', 'comparison', 'data', 'toc', 'breathing', 'infographic'}
+BOOKEND_FAMILY = {'cover', 'back', 'ending'}
+
 # 并发生成时最大工作线程数，避免 API 限流
 MAX_PARALLEL_WORKERS = 2  # Reduced from 3 to 2 for better stability
 
@@ -68,7 +72,6 @@ def _generate_single_slide(slide, visual_plan, slides_dir, generator, resolution
     # 共享 content 母版，确保整套 PPT 视觉语言统一
     if not reference_images:
         p_type = slide.get('type')
-        CONTENT_FAMILY = {'content', 'framework', 'flowchart', 'comparison', 'data', 'toc', 'breathing'}
         if p_type in CONTENT_FAMILY:
             master_img = masters.get('content')
         elif p_type == 'section':

@@ -80,6 +80,7 @@ if _in_skill_dir or not _cwd_has_tools:
 
 # ── 环境变量加载（在 bootstrap 之后）───────────────────────────────────────────
 _find_and_load_env()
+from tools.nano_banana_ppt.agents.narrative import NarrativeAgent
 from tools.nano_banana_ppt.agents.visual import VisualAgent
 from tools.nano_banana_ppt.agents.template import TemplateAgent
 from tools.nano_banana_ppt.core.executor import execute_plan
@@ -729,7 +730,6 @@ def execute_from_plan(plan_input: str, output_name: str = None, resolution: str 
 
     # 问题4: 内容一致性校验
     if not force:
-        from pathlib import Path
         issues = validate_content_visual_consistency(Path(proj_dir))
         if issues:
             print("\n❌ 发现内容不一致问题:")
@@ -1209,7 +1209,7 @@ if __name__ == "__main__":
                 target_slides = _auto_select_prototype_seeds(pf)
             print(f"\n🚀 Nano Banana 2 — Prototype Mode")
             print(f"   自动选取每种母版类型的种子页进行视觉验证: {target_slides}")
-            result = execute_from_plan(pf, output_name, resolution=resolution, slide_filter=target_slides, regenerate=regenerate, no_blend=no_blend)
+            result = execute_from_plan(pf, output_name, resolution=resolution, slide_filter=target_slides, regenerate=regenerate, no_blend=no_blend, force=True)
             if result:
                 print("\n✨ Prototype complete. Check the slides directory. If you are satisfied with the style, run the 'execute' command to generate the full presentation.")
 

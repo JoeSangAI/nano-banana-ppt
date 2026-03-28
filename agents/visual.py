@@ -74,6 +74,54 @@ class VisualAgent:
         self.model = "MiniMax-M2.7"
         self.prompt_mode = prompt_mode  # "verbose" or "minimal"
 
+    def _parse_user_color_preference(self, user_preference: str) -> list:
+        """
+        智能解析用户的配色意图
+        使用 LLM 理解用户的颜色描述，返回对应的 hex 色值列表
+        """
+        try:
+            # 使用 LLM 理解用户的配色意图
+            prompt = f"""Extract color palette from user preference: "{user_preference}"
+
+Output ONLY a JSON array of hex colors (2-4 colors). Examples:
+- "红白黑" → ["#E53935", "#FFFFFF", "#000000"]
+- "蓝色科技风" → ["#1E88E5", "#FFFFFF", "#263238"]
+- "warm and professional" → ["#FF6B6B", "#4ECDC4", "#F7FFF7"]
+
+Output format: ["#HEX1", "#HEX2", "#HEX3"]"""
+
+            response = chat_completion_with_fallback(
+                self.client, model=self.model, model_fallback=MODEL_FALLBACK_CHAIN,
+                messages=[
+                    {"role": "system", "content": "You are a color expert. Output valid JSON array only."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3
+            )
+            content = response.choices[0].message.content.strip()
+
+            # 清理 <think> 标签（MiniMax 模型特有）
+            content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL | re.IGNORECASE).strip()
+
+            # 清理 markdown 代码块标记
+            content = re.sub(r"^```(?:json)?\s*|```$", "", content, flags=re.MULTILINE|re.IGNORECASE).strip()
+
+            colors = json.loads(content)
+            if isinstance(colors, list) and len(colors) >= 2:
+                logger.info(f"✅ 从用户偏好 '{user_preference}' 中解析到配色: {colors}")
+                return colors
+        except Exception as e:
+            logger.warning(f"⚠️ 配色解析失败: {e}")
+
+        # 简单的关键词匹配作为最终 fallback
+        if any(kw in user_preference.lower() for kw in ['红', 'red', '白', 'white', '黑', 'black']):
+            logger.info(f"✅ 使用关键词匹配: 红白黑配色")
+            return ["#E53935", "#FFFFFF", "#000000"]
+
+        # 默认商务配色
+        logger.warning(f"⚠️ 使用默认商务配色")
+        return ["#FFFFFF", "#000000", "#757575"]
+
     def define_style(self, constraints: Dict, assets: Dict, template_info: Dict = None) -> Union[str, Dict]:
         """
         Step 1: 风格定义 (Style Definition)
@@ -162,6 +210,14 @@ Ensure the palette has high contrast for text reading.
                 temperature=0.7
             )
             content = response.choices[0].message.content.strip()
+
+            # 记录原始返回内容用于调试
+            logger.info(f"LLM 原始返回内容: {content[:200]}...")
+
+            # 清理 <think> 标签（MiniMax 模型特有）
+            content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL | re.IGNORECASE).strip()
+
+            # 清理 markdown 代码块标记
             content = re.sub(r"^```(?:json)?\s*|```$", "", content, flags=re.MULTILINE|re.IGNORECASE).strip()
 
             style_data = json.loads(content)
@@ -174,8 +230,18 @@ Ensure the palette has high contrast for text reading.
 
         except Exception as e:
             logger.error(f"风格定义失败: {e}")
-            fallback_desc = "Modern Professional Business style, clean #F5F5F7 background, #333333 text, minimalistic and high-end."
-            return fallback_desc, {"mode": "fallback", "description": fallback_desc, "palette": ["#F5F5F7", "#333333"]}
+            logger.error(f"LLM 返回内容: {content if 'content' in locals() else 'N/A'}")
+
+            # 智能 fallback：解析用户的配色意图
+            fallback_palette = self._parse_user_color_preference(user_preference)
+            fallback_desc = f"Minimalist Business style with {user_preference}. Clean, professional, high contrast."
+
+            return fallback_desc, {
+                "mode": "fallback",
+                "description": fallback_desc,
+                "palette": fallback_palette,
+                "user_preference": user_preference
+            }
 
     # ── Content-aware layout assignment ──
 

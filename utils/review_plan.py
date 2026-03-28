@@ -205,8 +205,16 @@ def generate_per_slide_visual_suggestions(
         if body:
             ctx += f" | 正文:{'; '.join(str(b) for b in body[:3])}"
         if table_data:
-            headers = table_data.get("headers", [])
-            rows = table_data.get("rows", [])
+            # 支持两种格式：dict {{"headers": [...], "rows": [[...]]}} 或 string (原始markdown)
+            if isinstance(table_data, str):
+                # 解析原始markdown表格字符串
+                lines_t = table_data.strip().split('\n')
+                headers = [c.strip() for c in lines_t[0].split('|') if c.strip()]
+                rows = [[c.strip() for c in line.split('|') if c.strip() and not re.match(r'^[-:\s]+$', c)]
+                        for line in lines_t[2:] if line.strip()]
+            else:
+                headers = table_data.get("headers", [])
+                rows = table_data.get("rows", [])
             ctx += f" | 表格列名: {headers} | 表格行数据: {rows}"
         pages_context.append(ctx)
 
@@ -349,8 +357,16 @@ def build_content_review_md(
             lines.append(f"- **副标题**：{subhead}")
 
         if table_data:
-            headers = table_data.get("headers", [])
-            rows = table_data.get("rows", [])
+            # 支持两种格式：dict {{"headers": [...], "rows": [[...]]}} 或 string (原始markdown)
+            if isinstance(table_data, str):
+                # 解析原始markdown表格字符串
+                lines_t = table_data.strip().split('\n')
+                headers = [c.strip() for c in lines_t[0].split('|') if c.strip()]
+                rows = [[c.strip() for c in line.split('|') if c.strip() and not re.match(r'^[-:\s]+$', c)]
+                        for line in lines_t[2:] if line.strip()]
+            else:
+                headers = table_data.get("headers", [])
+                rows = table_data.get("rows", [])
             lines.append("- **表格内容**：")
             lines.append("")
             if headers:
@@ -364,18 +380,26 @@ def build_content_review_md(
         elif body:
             body_format = tc.get("body_format", "bullets")
             lines.append("- **正文**：")
+            # 过滤掉 body 中混入的 headline/subhead/speaker_notes/正文 等项（它们应该由顶层变量输出）
+            filtered_body = [b for b in body if not (
+                '**标题**' in b or
+                '**副标题**' in b or
+                '**演讲备注' in b or
+                '**正文**' in b
+            )]
             if body_format in ("paragraph", "quote", "data") and len(body) <= 2:
-                for b in body:
+                for b in filtered_body:
                     lines.append(f"  {b}")
             else:
-                for b in body:
+                for b in filtered_body:
                     lines.append(f"  - {b}")
             lines.append("")
 
+        # 演讲备注（如果还没有被 body 中的项提取，则单独输出）
         speaker_notes = page.get("speaker_notes", "")
         if speaker_notes:
             lines.append("- **🎙️ 演讲备注 (Speaker Notes)**：")
-            lines.append(f"  > {speaker_notes.replace(chr(10), chr(10) + '  > ')}")
+            lines.append(f"  > {speaker_notes.strip().replace(chr(10), chr(10) + '  > ')}")
             lines.append("")
 
         native_images = page.get("native_images", [])
@@ -565,8 +589,16 @@ def build_review_md(
         #     lines.append(f"- **抬机率**：{lift_rate}")
 
         if table_data:
-            headers = table_data.get("headers", [])
-            rows = table_data.get("rows", [])
+            # 支持两种格式：dict {{"headers": [...], "rows": [[...]]}} 或 string (原始markdown)
+            if isinstance(table_data, str):
+                # 解析原始markdown表格字符串
+                lines_t = table_data.strip().split('\n')
+                headers = [c.strip() for c in lines_t[0].split('|') if c.strip()]
+                rows = [[c.strip() for c in line.split('|') if c.strip() and not re.match(r'^[-:\s]+$', c)]
+                        for line in lines_t[2:] if line.strip()]
+            else:
+                headers = table_data.get("headers", [])
+                rows = table_data.get("rows", [])
             lines.append("- **表格内容**：")
             lines.append("")
             if headers:
@@ -595,7 +627,7 @@ def build_review_md(
         speaker_notes = page.get("speaker_notes", "")
         if speaker_notes:
             lines.append("- **🎙️ 演讲备注 (Speaker Notes)**：")
-            lines.append(f"  > {speaker_notes.replace(chr(10), chr(10) + '  > ')}")
+            lines.append(f"  > {speaker_notes.strip().replace(chr(10), chr(10) + '  > ')}")
             lines.append("")
 
         native_images = page.get("native_images", [])
@@ -698,7 +730,7 @@ def parse_review_md(md_text: str) -> Dict[str, Any]:
     }
 
     page_blocks = re.findall(
-        r"###\s*第\s*(\d+)\s*页\s*·\s*(\S+)\s*\n\n(.*?)(?=\n###\s*第|\Z)",
+        r"###\s*第\s*(\d+)\s*页\s*·\s*(\S+)\s*\n\n(.*?)(?=\n###\s*第|\n[-─]{3,}\s*\n|\Z)",
         md_text,
         re.DOTALL,
     )

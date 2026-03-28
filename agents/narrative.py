@@ -488,13 +488,29 @@ class NarrativeAgent:
         for page in pages_raw:
             page_content = page['content']
 
+            # 提取真正的标题（从 **标题**：xxx 格式中提取，而不是使用页面类型名）
+            title_match = re.search(r'\*\*标题\*\*[:：]?\s*(.+?)(?=\n|$)', page_content, re.IGNORECASE)
+            headline = title_match.group(1).strip() if title_match else page['title']
+
             # 提取副标题
             subtitle_match = re.search(r'\*\*副标题\*\*[:：]?\s*(.+?)(?=\n|$)', page_content, re.IGNORECASE)
             subtitle = subtitle_match.group(1).strip() if subtitle_match else ""
 
-            # 提取演讲备注
-            speaker_notes_match = re.search(r'\*\*演讲备注\*\*[:：]?\s*\n(.*?)(?=\n\*\*|$)', page_content, re.DOTALL | re.IGNORECASE)
-            speaker_notes = speaker_notes_match.group(1).strip() if speaker_notes_match else ""
+            # 提取演讲备注 (支持 🎙️ emoji 和 (Speaker Notes) 后缀)
+            # 格式: **🎙️ 演讲备注**：[换行]> 内容 或 **演讲备注**：[换行]内容
+            # 结束条件：空行+新块 / --- 分隔线 / 文件结尾
+            speaker_notes_match = re.search(
+                r'\*\*(?:🎙️\s*)?演讲备注\*\*(?:\s*\(Speaker Notes\))?[:：]?\s*\n\s*(>\s*)?(.*?)(?=\n\s*\n\*\*|\n\s*[-─]{3,}\s*(?:\n|$))',
+                page_content, re.DOTALL | re.IGNORECASE
+            )
+            if speaker_notes_match:
+                # group(1) = ">\s*" 前缀(如果存在), group(2) = 内容
+                speaker_notes = (speaker_notes_match.group(2) or "").strip()
+                # 去掉末尾可能残留的孤立 ">"
+                if speaker_notes.endswith('>'):
+                    speaker_notes = speaker_notes.rstrip('>').strip()
+            else:
+                speaker_notes = ""
 
             # 提取正文要点 (bullet points)
             bullet_pattern = r'^\s*[-*]\s+(.+)$'
@@ -520,17 +536,24 @@ class NarrativeAgent:
             elif table_matches:
                 page_type = "data"
 
+            # 过滤掉 body 中混入的标题、副标题、演讲备注等项
+            filtered_bullets = [b for b in bullets if not (
+                '**标题**' in b or
+                '**副标题**' in b or
+                '演讲备注' in b
+            )]
+
             # 构建 JSON 结构
             page_json = {
                 "page_num": page['page_num'],
                 "type": page_type,
                 "text_content": {
-                    "headline": page['title'],
-                    "subheadline": subtitle,
-                    "body": bullets if bullets else []
+                    "headline": headline,
+                    "subhead": subtitle,
+                    "body": filtered_bullets if filtered_bullets else []
                 },
                 "speaker_notes": speaker_notes,
-                "visual_suggestion": f"根据标题「{page['title']}」设计画面"
+                "visual_suggestion": f"根据标题「{headline}」设计画面"
             }
 
             # 如果有表格，添加到 body 中
