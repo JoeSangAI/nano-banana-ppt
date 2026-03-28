@@ -44,7 +44,7 @@ class VisualAgent:
             timeout=120.0,
             max_retries=3
         )
-        self.model = "gemini-3.1-pro-preview"
+        self.model = "MiniMax-M2.7"
         self.prompt_mode = prompt_mode  # "verbose" or "minimal"
 
     def define_style(self, constraints: Dict, assets: Dict, template_info: Dict = None) -> Union[str, Dict]:
@@ -591,7 +591,7 @@ Directly output the final image-generation Prompt string. No explanation."""
                 for pattern, desc in forbidden_patterns:
                     if re.search(pattern, cleaned_prompt, re.MULTILINE):
                         cleaned_prompt = re.sub(pattern, '', cleaned_prompt, flags=re.MULTILINE)
-                        logger.warning(f"⚠️ P{pnum} 已清理禁止格式 ({desc})，已自动修复")
+                        logger.warning(f"⚠️ P{page.get('page_num')} 已清理禁止格式 ({desc})，已自动修复")
 
                 # 清理多余空行
                 cleaned_prompt = re.sub(r'\n{3,}', '\n\n', cleaned_prompt)

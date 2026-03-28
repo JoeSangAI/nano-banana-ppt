@@ -320,8 +320,21 @@ def generate_visual_plan(plan_dir: str, style_preference: str = None):
         style_desc_str = str(style_definition)
         style_config = {"description": style_desc_str, "palette": [], "mode": "ai_minting"}
 
-    # Step 2: 生成视觉主张 (Art Director Manifesto) — 仅供用户审阅
-    print("\n📋 [Step 2/3] 正在生成视觉主张 (Art Director Manifesto)...")
+    # Step 2: 为每页生成具体的「配图/画面」描述（Visual Director 提案）
+    print("\n📋 [Step 2/4] 正在生成每页视觉提案 (Visual Director)...\n⏳ 这可能需要 1-2 分钟...")
+    from tools.nano_banana_ppt.utils.review_plan import generate_per_slide_visual_suggestions
+    per_slide_suggestions = generate_per_slide_visual_suggestions(
+        narrative_outline, style_config, api_key, api_base
+    )
+    if per_slide_suggestions:
+        print(f"✅ 已生成 {len(per_slide_suggestions)} 页的视觉描述")
+        for pnum, suggestion in sorted(per_slide_suggestions.items()):
+            print(f"   P{pnum}: {suggestion[:60]}...")
+    else:
+        print("⚠️ 未生成视觉描述，将留空供用户补充")
+
+    # Step 3: 生成视觉主张 (Art Director Manifesto) — 仅供用户审阅
+    print("\n📋 [Step 3/4] 正在生成视觉主张 (Art Director Manifesto)...")
     from tools.nano_banana_ppt.utils.review_plan import generate_design_manifesto
 
     is_template_mode = bool(meta.get("template_file"))
@@ -333,13 +346,14 @@ def generate_visual_plan(plan_dir: str, style_preference: str = None):
     )
     manifesto_text = manifesto_dict.get("chinese_proposal", "")
 
-    # Step 3: 生成人类可审阅的 master_plan.md
-    print("\n📋 [Step 3/3] 正在生成完整审阅计划...")
+    # Step 4: 生成人类可审阅的 master_plan.md
+    print("\n📋 [Step 4/4] 正在生成完整审阅计划...")
     content_md_path_str = str(content_md_path) if content_md_path.exists() else None
     if content_md_path_str:
         review_md_content = build_master_plan_from_content_plan(
             content_md_path_str, style_config, meta,
             manifesto=manifesto_text,
+            per_slide_suggestions=per_slide_suggestions,
         )
     else:
         raise FileNotFoundError(f"content_plan.md 不存在: {content_md_path}。请先运行 plan-content。")
@@ -355,7 +369,7 @@ def generate_visual_plan(plan_dir: str, style_preference: str = None):
     print(f"⛔ STOP — 请勿继续执行 execute！")
     print(f"   必须先让用户审阅 {REVIEW_MD_FILENAME} 中的：")
     print(f"   ① 视觉主张和配色方案")
-    print(f"   ② 每页的配图/画面描述")
+    print(f"   ② 每页的配图/画面描述（VisualDirector 已生成，可直接审阅或修改）")
     print(f"{'='*60}")
     print(f"   确认后运行: python main.py execute \"{project_dir}\"")
     print(f"   或生成原型: python main.py prototype \"{project_dir}\"")
@@ -591,7 +605,7 @@ def execute_from_plan(plan_input: str, output_name: str = None, resolution: str 
             if parsed.get("pages"):
                 pmeta = parsed.get("meta", {})
                 content_file = pmeta.get("content_file", "")
-                plan_data = derive_technical_plan(parsed, proj_dir, content_file)
+                plan_data = derive_technical_plan(parsed, proj_dir, content_file, api_key, api_base)
                 with open(plan_json_path, "w", encoding="utf-8") as f:
                     json.dump(plan_data, f, ensure_ascii=False, indent=2)
                 print(f"✅ 技术计划已更新并保存: {plan_json_path}")

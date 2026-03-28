@@ -22,9 +22,17 @@ def build_master_plan_from_content_plan(
     style_config: Dict,
     meta: Dict,
     manifesto: str = "",
+    per_slide_suggestions: Dict[int, str] = None,
 ) -> str:
     """
     从 content_plan.md 文件读取内容大纲,结合 style_config 生成完整的 visual_plan.md
+
+    Args:
+        content_md_path: content_plan.md 文件路径
+        style_config: 风格配置
+        meta: 元信息
+        manifesto: 视觉主张文本
+        per_slide_suggestions: {page_num: visual_suggestion_str} — VisualDirector 为每页生成的视觉描述
     """
     # 读取 content_plan.md 并使用 parse_review_md 正确解析
     with open(content_md_path, 'r', encoding='utf-8') as f:
@@ -44,6 +52,13 @@ def build_master_plan_from_content_plan(
                 "body": ""
             }
         }]
+
+    # 注入 VisualDirector 为每页生成的 visual_suggestion
+    if per_slide_suggestions:
+        for page in narrative_outline:
+            pnum = page.get("page_num")
+            if pnum in per_slide_suggestions:
+                page["visual_suggestion"] = per_slide_suggestions[pnum]
 
     # 调用 build_review_md 生成完整的审阅计划
     return build_review_md(narrative_outline, style_config, meta, manifesto)
@@ -151,6 +166,115 @@ def generate_design_manifesto(
             "english_cliche_bans": "No glowing brains, no handshakes, no generic 3D funnels, no floating data.",
             "visual_diversity_strategy": ""
         }
+
+
+def generate_per_slide_visual_suggestions(
+    narrative_outline: List[Dict],
+    style_config: Dict,
+    api_key: str,
+    api_base: Optional[str] = None,
+) -> Dict[int, str]:
+    """
+    为每一页生成具体的「配图/画面」人类语言描述（Visual Director 提案）。
+    返回 dict: {page_num: visual_suggestion_string}
+    这些描述将在 master_plan.md 中供用户审阅，并在 execute 阶段严格遵循。
+    """
+    from .llm_client import chat_completion_with_fallback, MODEL_FALLBACK_CHAIN
+    from openai import OpenAI
+
+    client = OpenAI(api_key=api_key, base_url=api_base or "https://generativelanguage.googleapis.com/v1beta/openai")
+
+    palette = style_config.get("palette", [])
+    style_desc = style_config.get("description", "Professional presentation")
+    palette_str = ", ".join(palette) if palette else "auto"
+
+    # 构建每页的上下文摘要（给 LLM 参考）
+    pages_context = []
+    for p in narrative_outline:
+        pnum = p.get("page_num", 0)
+        ptype = p.get("type", "content")
+        tc = p.get("text_content", {})
+        headline = tc.get("headline", "")
+        subhead = tc.get("subhead", "")
+        body = tc.get("body", [])
+        table_data = tc.get("table_data")
+
+        ctx = f"P{pnum} [{ptype}] 标题:{headline}"
+        if subhead:
+            ctx += f" | 副标题:{subhead}"
+        if body:
+            ctx += f" | 正文:{'; '.join(str(b) for b in body[:3])}"
+        if table_data:
+            headers = table_data.get("headers", [])
+            rows = table_data.get("rows", [])
+            ctx += f" | 表格列名: {headers} | 表格行数据: {rows}"
+        pages_context.append(ctx)
+
+    pages_text = "\n".join(pages_context)
+
+    system_prompt = (
+        "You are a world-class Art Director. "
+        "For each slide listed, you must propose a CONCRETE, SPECIFIC visual scene description "
+        "in natural Chinese. Be precise — state exact visual metaphors, objects, and composition. "
+        "If a slide has TABLE DATA, you MUST describe the exact data points and how they appear visually. "
+        "Write for a human to read and confirm — this is the creative brief for image generation."
+    )
+
+    user_prompt = f"""【Global Style】
+- Style: {style_desc}
+- Color Palette: {palette_str}
+
+【Slides to Design — ALL DATA MUST APPEAR IN DESCRIPTION】
+{pages_text}
+
+【CRITICAL RULES — VIOLATION WILL PRODUCE WRONG OUTPUT】
+
+For EVERY slide:
+- Write 2-4 sentences of concrete Chinese visual description
+- Describe EXACT objects, lighting, composition, visual metaphors
+- For DATA slides: You MUST include ALL numbers from the table in your description. Do NOT summarize or omit any row.
+
+SPECIFIC EXAMPLES OF CORRECT BEHAVIOR:
+- GOOD: "画面中央是一个天平，左边放着标注'5.5万亿（占电商30%）'的金色立方体，右边是标注'6000亿'的巨大红色圆环，天平向右侧倾斜"
+- BAD:   "画面中央是一个天平，对比左右两侧的数据差异"
+
+- GOOD: "四个数据卡片并排：'10.74亿（日活）'、'95%（渗透率）'、'18.3亿（抖音）'、'156分钟（时长）'"
+- BAD:   "四个数据卡片展示关键指标"
+
+Output format (pure JSON, no markdown):
+{{
+  "slides": {{
+    "1": "配图描述（必须包含所有关键数据）...",
+    "2": "配图描述...",
+    ...
+  }}
+}}
+
+JSON only, no explanation:"""
+
+    try:
+        response = chat_completion_with_fallback(
+            client,
+            model="MiniMax-M2.7",
+            model_fallback=MODEL_FALLBACK_CHAIN,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.7
+        )
+        import json, re
+        content = response.choices[0].message.content.strip()
+        # Extract JSON
+        json_match = re.search(r'\{[\s\S]+\}', content)
+        if json_match:
+            data = json.loads(json_match.group())
+            slides_data = data.get("slides", {})
+            return {int(k): v for k, v in slides_data.items()}
+    except Exception as e:
+        logger.error(f"Failed to generate per-slide visual suggestions: {e}")
+    return {}
+
 
 def build_content_review_md(
     narrative_outline: List[Dict],

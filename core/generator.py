@@ -153,8 +153,8 @@ class PPTGenerator:
     def __init__(self, api_key: str, api_base: str = None, slides_dir: str = "output/slides"):
         """
         Args:
-            api_key: API 密钥
-            api_base: API Base URL（可选）
+            api_key: API 密钥（用于 LLM 调用）
+            api_base: API Base URL（用于 LLM 调用）
             slides_dir: 临时幻灯片图片的保存目录
         """
         from openai import OpenAI
@@ -163,6 +163,13 @@ class PPTGenerator:
         self.text_model = "gemini-3-flash-preview"
         self.visual_director_model = "gemini-3.1-pro-preview"
         self.image_model = "gemini-3.1-flash-image-preview"
+
+        # 图片生成客户端（DeerAPI）
+        image_gen_key = os.getenv("IMAGE_GEN_API_KEY") or api_key
+        image_gen_base = os.getenv("IMAGE_GEN_API_BASE") or "https://api.deerapi.com/v1"
+        self._image_gen_client = OpenAI(api_key=image_gen_key, base_url=image_gen_base)
+        self._image_gen_api_key = image_gen_key
+
         self.output_dir = Path(slides_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
     
@@ -248,8 +255,8 @@ class PPTGenerator:
         if not api_key:
             raise ValueError("无法获取 API Key")
 
-        is_openrouter = "openrouter" in str(getattr(self.client, "base_url", "")).lower()
-        is_deerapi = "deerapi" in str(getattr(self.client, "base_url", "")).lower()
+        is_openrouter = "openrouter" in str(getattr(self._image_gen_client, "base_url", "")).lower()
+        is_deerapi = "deerapi" in str(getattr(self._image_gen_client, "base_url", "")).lower()
 
         if is_openrouter or is_deerapi:
             # 适配 OpenRouter 和 DeerAPI 的 OpenAI 格式调用
@@ -274,7 +281,7 @@ class PPTGenerator:
             import time
             for attempt in range(5):
                 try:
-                    resp = self.client.chat.completions.create(
+                    resp = self._image_gen_client.chat.completions.create(
                         model=or_model,
                         messages=messages,
                         extra_body={"image_config": {"aspect_ratio": aspect_ratio, "imageSize": resolution}}

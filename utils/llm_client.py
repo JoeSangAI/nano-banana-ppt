@@ -13,11 +13,11 @@ from typing import List, Optional, Set
 logger = logging.getLogger(__name__)
 
 # 主模型 → 备用模型链（当主模型不可用时依次尝试）
+# 注意：MiniMax API 需要使用 MiniMax 模型名；Google Gemini 模型名会导致 400 unknown model 错误
 MODEL_FALLBACK_CHAIN: List[str] = [
-    "gemini-2.5-flash",    # 主模型
-    "gemini-3.1-pro-preview",    
-    "gemini-3-pro-preview",      # 备用 1：3.0 Pro
-    "gemini-3-flash-preview",    # 备用 2：3.0 Flash
+    "MiniMax-M2.7",           # 主模型：MiniMax M2.7
+    "gemini-2.5-flash",      # 备用 1：Google Gemini（仅在支持 Gemini 的 API 端点下有效）
+    "gemini-3.1-pro-preview",
 ]
 
 # 本任务内已确认 429（配额耗尽）的模型，后续所有调用直接跳过
@@ -77,6 +77,23 @@ def _is_connection_error(e: Exception) -> bool:
         "ssl",
     ]
     return any(k in err_str for k in keywords)
+
+
+def _is_bad_request_model_not_supported(e: Exception) -> bool:
+    """400 错误且为'不支持的模型'类型：跳过该模型，尝试备用模型"""
+    err_str = str(e).lower()
+    # MiniMax / Gemini Proxy 返回的 unknown model 错误
+    if "bad_request_error" in err_str and "unknown model" in err_str:
+        return True
+    if "invalid params" in err_str and "unknown model" in err_str:
+        return True
+    # 检查 status_code == 400
+    if hasattr(e, "response") and hasattr(e.response, "status_code"):
+        if e.response.status_code == 400:
+            return True
+    if hasattr(e, "status_code") and e.status_code == 400:
+        return True
+    return False
 
 
 def chat_completion_with_fallback(
@@ -140,6 +157,12 @@ def chat_completion_with_fallback(
             elif _is_connection_error(e):
                 if i < len(effective_models) - 1:
                     logger.warning(f"⚠️ 模型 {m} 连接错误，切换到: {effective_models[i + 1]}（下次仍会重试主模型）")
+                else:
+                    raise
+            elif _is_bad_request_model_not_supported(e):
+                # 400 unknown model: 跳过该模型，尝试备用模型（不加黑名单）
+                if i < len(effective_models) - 1:
+                    logger.warning(f"⚠️ 模型 {m} 不被 API 支持 (400)，切换到: {effective_models[i + 1]}")
                 else:
                     raise
             else:
