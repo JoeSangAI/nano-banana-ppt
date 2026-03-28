@@ -642,7 +642,12 @@ CRITICAL: Output ONLY the raw image-generation prompt text. No markdown formatti
 - NO black blocks, NO solid black rectangles. Use seamless full-bleed composition.
 - Do NOT use random, inconsistent fonts or typography elements.{manifesto_ban}"""
 
-            tpl_system_prompt = "You are an expert Prompt Engineer for Nano Banana 2 (Gemini Image). Your top priority is maintaining strict visual and typographic consistency across all generated slides."
+            tpl_system_prompt = (
+                "You are an expert Prompt Engineer for Nano Banana 2 (Gemini Image). "
+                "OUTPUT FORMAT: You must output EXACTLY one plain-text string — no markdown, no bullet markers (• - *), "
+                "no headings (#), no bold/italic (* or **), no code blocks (```). "
+                "Pure plain text only."
+            )
 
             tpl_shared_prompt = f"""Generate a high-fidelity image generation prompt for a BLANK TEMPLATE slide background.
 
@@ -661,7 +666,7 @@ Think of it as a premium, barely-decorated editorial page — restrained, spacio
 {tpl_neg_constraints}
 
 【Output】
-Directly output the final image-generation Prompt string. No explanation."""
+CRITICAL: Output ONLY the raw image-generation prompt text. No markdown formatting (no **bold**, *italic*, bullet markers • -, # headings, ``` code blocks). Pure plain text only."""
 
             def generate_template(tpl_type, title, layout):
                 try:

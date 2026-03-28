@@ -966,20 +966,12 @@ def derive_technical_plan(
     从解析后的 MD 数据，生成完整的 plan.json 结构（含 visual_prompt）。
     调用 VisualAgent 生成 visual_prompt。
     """
-    from openai import OpenAI
     from .llm_client import MODEL_FALLBACK_CHAIN
 
     model_fallback = model_fallback or MODEL_FALLBACK_CHAIN
     
     from tools.nano_banana_ppt.agents.visual import VisualAgent
     visual_agent = VisualAgent(api_key=api_key, api_base=api_base)
-        
-    client = OpenAI(
-        api_key=api_key,
-        base_url=api_base or "https://generativelanguage.googleapis.com/v1beta/openai",
-        timeout=120.0,
-        max_retries=3,
-    )
 
     meta = parsed.get("meta", {})
     style = parsed.get("style", {})
