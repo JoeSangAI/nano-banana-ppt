@@ -439,7 +439,13 @@ Ensure the palette has high contrast for text reading.
                     native_image_constraint += "3. A separate screenshot or graphic will be OVERLAID on top of the final image later. You MUST include an instruction to leave a massive, completely empty, clean safe zone (flat gradient or solid color, NO graphics, NO text, NO objects) for this overlay.\n"
 
             # 5. Build prompt
-            system_prompt = "You are an expert Prompt Engineer for Nano Banana 2 (Gemini Image). Your top priority is maintaining strict visual and typographic consistency across all generated slides."
+            system_prompt = (
+                "You are an expert Prompt Engineer for Nano Banana 2 (Gemini Image). "
+                "Your top priority is maintaining strict visual and typographic consistency across all generated slides. "
+                "OUTPUT FORMAT: You must output EXACTLY one plain-text string — no markdown, no bullet markers (• - *), "
+                "no headings (#), no bold/italic (* or **), no code blocks (```). "
+                "The image-generation prompt itself may contain commas, periods, and Chinese characters, but the output wrapper must be plain text only."
+            )
 
             if template_info:
                 prompt_mode = f"""【Mode: STYLE CLONING & TEMPLATE SAFE ZONES】
@@ -505,7 +511,7 @@ Ensure the palette has high contrast for text reading.
 {neg_constraints}
 
 【Output】
-Output the final image-generation prompt directly."""
+CRITICAL: Output ONLY the raw image-generation prompt text. No markdown formatting (no **bold**, *italic*, bullet markers • -, # headings, ``` code blocks). Pure plain text only."""
             else:
                 # Verbose mode: detailed prompt structure
                 user_prompt = f"""Generate a high-fidelity image generation prompt for a PPT slide.
@@ -548,7 +554,7 @@ The "User-Confirmed Visual Description" above is the EXACT visual the user has a
 {neg_constraints}
 
 【Output】
-Directly output the final image-generation Prompt string. No explanation."""
+CRITICAL: Output ONLY the raw image-generation prompt text. No markdown formatting (no **bold**, *italic*, bullet markers • -, # headings, ``` code blocks). Pure plain text only."""
 
             tasks.append({
                 'skip_llm': False,
