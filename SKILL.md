@@ -122,9 +122,12 @@ python3 -m nano_banana_ppt.main execute <project_dir_or_plan_md> [output_name] [
 4. **⛔ STOP — GATE 1.** Do NOT run `plan-visual` yet. Wait for the user to explicitly confirm the content outline (e.g., "内容没问题" / "确认" / "可以"). The user may edit `content_plan.md` before confirming.
 
 #### ── GATE 2: Visual Plan ──
-5. **Style Consultation:** Only after GATE 1 is confirmed, ask the user if they have a preferred visual style. **Proactively list 3-4 relevant options** from the *Curated Style Library* (e.g., "Would you like a 'Claude Minimalist', 'Apple Keynote', or 'Liquid Glass' style?").
+5. **Style Consultation:** Only after GATE 1 is confirmed, ask the user if they have a preferred visual style. Based on the content topic and audience, **proactively recommend 3-4 most fitting styles** (e.g., for a fintech product: "Dark Luxury / Liquid Glass / Neo-Brutalism / 或者自由描述").
+   - 如果用户已明确说过风格（如"极简商务风"），直接采用，跳过推荐。
+   - 如果用户描述了自己的意图但不在预制库中（如"赛博朋克+中国龙元素"），记录为 free-text style，plan-visual 会通过 LLM 理解并映射。
+   - **模板复刻**（用户提供 PDF/PPTX）和**自定义 AI Minting**（无模板时 AI 自动定义风格）均全程可用，前者通过 `--template` 参数传入，后者为默认行为。
 6. Run `plan-visual <project_dir>` with the selected `--style` (if any).
-7. **Present `master_plan.md` to the user.** Show the Art Director's Manifesto (visual style, palette, cliché avoidance rules) and the per-slide visual descriptions.
+7. **Present `master_plan.md` to the user.** Show the Art Director's Manifesto (visual style, palette, cliché avoidance rules) and the per-slide visual descriptions. **Do NOT include the full style inspiration list in master_plan.md** — that list was only for agent reference during style consultation.
 8. **⛔ STOP — GATE 2.** Do NOT run `execute` or `prototype` yet. Wait for the user to explicitly confirm the visual plan. Remind the user they can edit `master_plan.md` directly to adjust any slide's visual description before proceeding.
 
 #### ── Prototype & Execute ──
