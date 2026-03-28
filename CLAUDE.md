@@ -118,4 +118,5 @@ nano-banana-ppt/
 
 ### Available Style Presets (`--style`)
 
-`claude_minimalist`, `neo_brutalism`, `japanese_aesthetic`, `apple_keynote`, `liquid_glass`, `magazine_editorial`, `soft_3d_clay`, `dark_luxury`, `traditional_chinese`, `holographic_chrome`, `cyberpunk`, `academic_paper`
+31 styles across 8 categories. Key ones:
+`blackboard`, `whiteboard`, `sketch_note`, `blueprint`, `exploded_view`, `minimal_data`, `terminal_tech`, `swiss_design`, `academic_paper`, `claude_minimalist`, `apple_keynote`, `liquid_glass`, `dark_luxury`, `executive_dashboard`, `strategic_infographic`, `sharp_minimalism`, `soft_3d_clay`, `corporate_memphis`, `paper_craft`, `magazine_editorial`, `yellow_black_editorial`, `modern_newspaper`, `black_orange_creative`, `neo_brutalism`, `holographic_chrome`, `cyberpunk`, `manga_narrative`, `sports_energy`, `digital_neo_pop`, `pink_street_style`, `japanese_aesthetic`, `traditional_chinese`, `royal_blue_red_watercolor`, `deformed_flat_persona`, `studio_mockup_premium`, `classic_pop_sculpture_vaporwave`, `tech_art_neon`, `mincho_handwritten_mix`

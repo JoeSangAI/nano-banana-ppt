@@ -57,20 +57,60 @@ Automates professional PowerPoint creation using Google's Nano Banana 2 (Gemini 
 
 The pipeline is split into phases to allow human review before image generation (the expensive step).
 
-### Pre-defined Style Library (内置风格库)
-You can directly use these high-quality curated styles by passing their names to the `--style` argument or `style_preference` input:
-- **`claude_minimalist`**: Warm, intellectual, approachable. Off-white/cream backgrounds, elegant typography mixing serif and sans-serif.
-- **`neo_brutalism`** (新粗野主义): Raw, bold, unapologetic. High contrast, stark backgrounds, bright accents, thick black borders, hard offset shadows.
-- **`japanese_aesthetic`** (日式美学): Zen, quiet, balanced. Muted earth tones, extreme negative space, asymmetrical balance.
-- **`apple_keynote`**: Premium, cinematic. Deep black backgrounds, massive white typography, glowing gradients.
-- **`liquid_glass`**: Premium glassmorphism with Bento Grid layouts and frosted translucent panels.
-- **`magazine_editorial`**: Fashion/editorial layout with dramatic whitespace and serif-led typography.
-- **`soft_3d_clay`**: Friendly inflated 3D clay aesthetic with soft pastel colors.
-- **`dark_luxury`**: Premium dark background with metallic gold accents.
-- **`traditional_chinese`**: Neo-Chinese aesthetic with ink wash, vermilion and jade accents.
-- **`holographic_chrome`**: Y2K holographic chrome and iridescent gradients.
-- **`cyberpunk`**: Dark, dystopian, high-tech. Deep navy/black with neon cyan, magenta, electric yellow.
-- **`academic_paper`**: Clean, authoritative. White background, classic serif typography, formal grid structure.
+### Pre-defined Style Library (内置风格库 · 31风格 · 8分类)
+You can directly use these high-quality curated styles by passing their names to the `--style` argument or `style_preference` input. Styles are organized by content scenario categories:
+
+**内容讲解型**
+- **`blackboard`** (黑板风): 粉笔感、培训教学、课堂推导
+- **`whiteboard`** (白板风): 马克笔、内部分享、头脑风暴
+- **`sketch_note`** (手绘笔记风): 手绘图标、会议纪要、工作坊
+
+**结构与技术型**
+- **`blueprint`** (蓝图风): 深蓝底白线稿、架构图、工程制图
+- **`exploded_view`** (爆炸图): 产品拆解、模块关系
+- **`minimal_data`** (极简数据风): 扁平图表、统计汇报
+- **`terminal_tech`** (终端技术风): 黑底等宽、网络安全、极客感
+- **`swiss_design`** (瑞士设计风): 网格系统、严谨商务
+- **`academic_paper`** (学术风): Nature/Science风格、学术报告
+
+**商务与高端型**
+- **`claude_minimalist`**: 温暖知识风、思考型内容
+- **`apple_keynote`**: 电影感、深黑背景、发布会
+- **`liquid_glass`**: 毛玻璃、Bento Grid、金融科技
+- **`dark_luxury`**: 黑金奢华、高端品牌
+- **`executive_dashboard`** (高管仪表盘): KPI、财务、指挥中心
+- **`strategic_infographic`** (战略信息图): 路线图、高层战略
+- **`sharp_minimalism`** (极致简约): 刚性网格、高端克制
+
+**人物与亲和型**
+- **`soft_3d_clay`**: 粘土风、马卡龙、软萌可爱
+- **`corporate_memphis`** (企业协作插画风): 扁平人物、HR、团队文化
+- **`paper_craft`** (纸艺手作风): 层叠纸张、创意提案、教育
+
+**编辑、杂志与潮流型**
+- **`magazine_editorial`**: 时尚杂志、大片摄影、编辑力度
+- **`yellow_black_editorial`** (黄黑编辑风): 黄底黑字、年轻品牌、强冲击
+- **`modern_newspaper`** (商业媒体风): 大标题、编辑感、思想领导力
+- **`black_orange_creative`** (黑橙创意公司风): 创意机构、广告
+
+**流行、娱乐与高冲击型**
+- **`neo_brutalism`**: 新粗野主义、高对比、粗黑边框
+- **`holographic_chrome`**: 全息铬金属、Y2K、彩虹渐变
+- **`cyberpunk`**: 霓虹赛博朋克、高科技、视觉冲击
+- **`manga_narrative`** (漫画叙事风): 分镜、故事化、onboarding
+- **`sports_energy`** (运动热血风): 速度感、激励、战役传播
+- **`digital_neo_pop`** (数码拼贴风): 像素、builder文化、年轻创业
+- **`pink_street_style`** (粉色街头风): 街潮、网红、活泼发布
+
+**Artistic & Avant-garde**
+- **`japanese_aesthetic`** (日式美学): 侘寂、禅意、水墨
+- **`traditional_chinese`** (新中式): 国潮、红金、水墨
+- **`royal_blue_red_watercolor`** (水彩风): 绘画感、愿景叙事
+- **`deformed_flat_persona`** (变形扁平人物风): 艺术插画、身份认同
+- **`studio_mockup_premium`** (高端产品摄影风): 产品展示、SaaS
+- **`classic_pop_sculpture_vaporwave`** (古典波普风): 雕塑+蒸汽波、实验性
+- **`tech_art_neon`** (科技艺术风): AI艺术、前沿视觉
+- **`mincho_handwritten_mix`** (明朝手写混搭风): 文学感、人文反思
 
 ### Phase 1: Plan (Copywriter Director & Art Director)
 
@@ -122,7 +162,20 @@ python3 -m nano_banana_ppt.main execute <project_dir_or_plan_md> [output_name] [
 4. **⛔ STOP — GATE 1.** Do NOT run `plan-visual` yet. Wait for the user to explicitly confirm the content outline (e.g., "内容没问题" / "确认" / "可以"). The user may edit `content_plan.md` before confirming.
 
 #### ── GATE 2: Visual Plan ──
-5. **Style Consultation:** Only after GATE 1 is confirmed, ask the user if they have a preferred visual style. Based on the content topic and audience, **proactively recommend 3-4 most fitting styles** (e.g., for a fintech product: "Dark Luxury / Liquid Glass / Neo-Brutalism / 或者自由描述").
+5. **Style Consultation:** Only after GATE 1 is confirmed, ask the user if they have a preferred visual style. Based on the content topic and audience, **proactively recommend 3-4 most fitting styles** from the expanded style library (31 styles, 8 categories).
+
+   **推荐表达方式**：优先用中文风格名 + 英文参考名补充，例如：
+   - "偏**高端极简商业风**（接近 sharp-edged minimalism）"
+   - "偏**战略信息图风**（适合路线图/高层汇报）"
+   - "偏**水墨风**（Neo-Chinese aesthetic）"
+
+   **快速对照**（按内容目标选）：
+   - 要讲清楚 → 内容讲解型（黑板风/白板风/手绘笔记风）
+   - 要讲结构 → 结构与技术型（蓝图风/拆解风/终端技术风）
+   - 要讲战略 → 商务与高端型（战略信息图/高管仪表盘/极致简约）
+   - 要讲人和团队 → 人物与亲和型（企业协作插画风/纸艺手作风）
+   - 要抓眼球 → 编辑潮流/流行高冲击型（黄黑编辑风/漫画叙事风/赛博朋克）
+
    - 如果用户已明确说过风格（如"极简商务风"），直接采用，跳过推荐。
    - 如果用户描述了自己的意图但不在预制库中（如"赛博朋克+中国龙元素"），记录为 free-text style，plan-visual 会通过 LLM 理解并映射。
    - **模板复刻**（用户提供 PDF/PPTX）和**自定义 AI Minting**（无模板时 AI 自动定义风格）均全程可用，前者通过 `--template` 参数传入，后者为默认行为。
