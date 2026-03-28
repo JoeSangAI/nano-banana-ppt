@@ -17,6 +17,33 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+# 问题3和问题7: Visual Prompt 约束模板
+VISUAL_PROMPT_CONSTRAINTS = """
+【页面布局规范 - 严格遵守】
+
+### 绝对禁止
+- 任何英文文字或字母
+- 卡通人物、动漫角色
+- 3D渲染效果
+- 与内容无关的装饰元素
+
+### 布局约束
+- 标题区：顶部10-15%，居左或居中
+- 内容区：中部60-70%
+- 结论区：底部15-20%，结论文字必须最大最醒目
+
+### 重复内容约束
+- 标题文字只出现在标题位置，不出现在画面装饰中
+- 每个关键信息只允许在一个位置出现
+- 禁止在画面中重复核心信息（最多出现1次）
+
+### 数据展示规范
+- 数字超过3个时用卡片/列表，不用柱状图对比
+- 避免排名展示（抖音>视频号>快手）
+- 强调用红色，背景/次要用灰色
+"""
+
+
 class VisualAgent:
     # ── Layout library for content-aware variety ──
     LAYOUT_LIBRARY = {

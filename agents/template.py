@@ -41,13 +41,18 @@ class TemplateAgent:
     def process_template(self, template_path: str) -> Dict:
         """
         处理模版文件，返回模版资产信息
+        支持格式: PDF, PPTX, PNG, JPG
         """
         logger.info(f"🎨 Template Agent: 正在解析模版 {template_path}...")
-        
+
         # Branch based on file extension
         if template_path.lower().endswith('.pptx'):
             return self.process_pptx_template(template_path)
-        
+
+        # 支持 PNG/JPG 图片格式
+        if template_path.lower().endswith(('.png', '.jpg', '.jpeg')):
+            return self.process_image_template(template_path)
+
         # 1. 将模版转换为图片序列 (PDF fallback)
         images = self._convert_to_images(template_path)
         if not images:
@@ -65,6 +70,51 @@ class TemplateAgent:
         template_info['reference_images'] = ref_paths
         
         return template_info
+
+    def process_image_template(self, image_path: str) -> Dict:
+        """
+        解析 PNG/JPG 图片模板，提取主色调和风格信息
+        """
+        logger.info(f"🎨 Template Agent: 正在解析图片模板 {image_path}...")
+
+        try:
+            img = Image.open(image_path)
+            from ..utils.image_utils import extract_dominant_colors
+            colors = extract_dominant_colors(image_path, num_colors=5)
+            logger.info(f"   提取到的主色调: {', '.join(colors)}")
+
+            ref_filename = f"ref_image_{os.path.basename(image_path)}"
+            ref_path = os.path.join(self.output_dir, ref_filename)
+            img.save(ref_path)
+
+            template_info = {
+                "source_type": "image",
+                "file_path": image_path,
+                "color_palette": colors,
+                "primary_color": colors[0] if colors else "#FFFFFF",
+                "secondary_color": colors[1] if len(colors) > 1 else "#000000",
+                "accent_color": colors[2] if len(colors) > 2 else "#CC0000",
+                "reference_images": [ref_path],
+                "page_types": ["Cover"],
+                "logo_path": None
+            }
+
+            logger.info(f"✅ 图片模板解析完成: 主色={template_info['primary_color']}, 辅色={template_info['secondary_color']}, 强调色={template_info['accent_color']}")
+            return template_info
+
+        except Exception as e:
+            logger.error(f"图片模板解析失败: {e}，使用默认配色")
+            return {
+                "source_type": "image",
+                "file_path": image_path,
+                "color_palette": ["#FFFFFF", "#000000", "#CC0000"],
+                "primary_color": "#FFFFFF",
+                "secondary_color": "#000000",
+                "accent_color": "#CC0000",
+                "reference_images": [],
+                "page_types": [],
+                "logo_path": None
+            }
 
     def process_pptx_template(self, pptx_path: str) -> Dict:
         """

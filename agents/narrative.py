@@ -48,6 +48,91 @@ class NarrativeAgent:
         # 如果找到 3 个以上的分页标记，认为是成熟大纲
         return matches >= 3
 
+    @staticmethod
+    def detect_complete_content_plan(text: str) -> Dict:
+        """
+        检测文本是否是一个完整的 content_plan.md
+
+        返回：
+        {
+            "is_complete": bool,
+            "page_count": int,
+            "has_speaker_notes": bool,
+            "has_tables": bool,
+            "confidence": float  # 0-1
+        }
+        """
+        # 检测分页标记
+        page_patterns = [
+            r'Slide\s+\d+[:：]',
+            r'第\s*\d+\s*页[:：]',
+            r'P\d+[:：]',
+            r'幻灯片\s*\d+[:：]',
+            r'##\s*第\s*\d+\s*页',
+            r'##\s*Slide\s+\d+',
+        ]
+
+        page_matches = []
+        for pattern in page_patterns:
+            page_matches.extend(re.findall(pattern, text, re.IGNORECASE))
+
+        page_count = len(page_matches)
+
+        # 检测演讲备注
+        speaker_notes_patterns = [
+            r'\*\*演讲备注\*\*',
+            r'\*\*Speaker Notes\*\*',
+            r'演讲备注[:：]',
+            r'Speaker Notes[:：]',
+        ]
+        speaker_notes_count = sum(len(re.findall(p, text, re.IGNORECASE)) for p in speaker_notes_patterns)
+        has_speaker_notes = speaker_notes_count > 0
+
+        # 检测数据表格 (Markdown table)
+        table_pattern = r'\|[^\n]+\|[^\n]+\n\|[-:\s|]+\|'
+        table_matches = re.findall(table_pattern, text)
+        has_tables = len(table_matches) > 0
+
+        # 检测副标题
+        subtitle_patterns = [
+            r'\*\*副标题\*\*',
+            r'\*\*Subtitle\*\*',
+        ]
+        subtitle_count = sum(len(re.findall(p, text, re.IGNORECASE)) for p in subtitle_patterns)
+
+        # 检测正文要点 (bullet points)
+        bullet_pattern = r'^\s*[-*]\s+.+$'
+        bullet_matches = re.findall(bullet_pattern, text, re.MULTILINE)
+        has_bullets = len(bullet_matches) >= page_count  # 平均每页至少1个要点
+
+        # 计算置信度
+        confidence = 0.0
+
+        if page_count >= 3:
+            confidence += 0.3
+
+        if has_speaker_notes and speaker_notes_count >= page_count * 0.5:
+            confidence += 0.3
+
+        if has_tables:
+            confidence += 0.2
+
+        if subtitle_count >= page_count * 0.3:
+            confidence += 0.1
+
+        if has_bullets:
+            confidence += 0.1
+
+        is_complete = page_count >= 3 and confidence >= 0.8
+
+        return {
+            "is_complete": is_complete,
+            "page_count": page_count,
+            "has_speaker_notes": has_speaker_notes,
+            "has_tables": has_tables,
+            "confidence": confidence
+        }
+
     def collect_constraints(self) -> Dict:
         """
         交互式收集用户约束参数 (CLI模式)
@@ -340,6 +425,123 @@ class NarrativeAgent:
             logger.error(f"大纲解析失败: {e}，回退到智能叙事模式")
             return None
 
+    def _parse_complete_content_plan(self, content_context: str, content_file_path: str = None) -> List[Dict]:
+        """
+        [完整大纲直接复用模式] 纯文本解析，不调用 LLM
+
+        100%保留用户原始内容，包括：
+        - 标题、副标题
+        - 正文要点（bullets）
+        - 演讲备注
+        - 数据表格
+        """
+        logger.info("🧠 Narrative Agent: 使用【直接复用模式】，100%保留原文...")
+
+        # 提取分页结构
+        page_patterns = [
+            (r'Slide\s+(\d+)[:：]\s*(.+?)(?=\n|$)', 'slide'),
+            (r'第\s*(\d+)\s*页[:：]\s*(.+?)(?=\n|$)', 'page'),
+            (r'P(\d+)[:：]\s*(.+?)(?=\n|$)', 'p'),
+            (r'##\s*第\s*(\d+)\s*页[:：]?\s*(.+?)(?=\n|$)', 'markdown_page'),
+            (r'##\s*Slide\s+(\d+)[:：]?\s*(.+?)(?=\n|$)', 'markdown_slide'),
+        ]
+
+        pages_raw = []
+        for pattern, pattern_type in page_patterns:
+            matches = re.finditer(pattern, content_context, re.MULTILINE | re.IGNORECASE)
+            for match in matches:
+                page_num = int(match.group(1))
+                title = match.group(2).strip()
+                start_pos = match.end()
+
+                # 找到下一个分页标记
+                next_match = None
+                for p, _ in page_patterns:
+                    next_matches = list(re.finditer(p, content_context[start_pos:], re.MULTILINE | re.IGNORECASE))
+                    if next_matches:
+                        if next_match is None or next_matches[0].start() < next_match.start():
+                            next_match = next_matches[0]
+
+                if next_match:
+                    page_content = content_context[start_pos:start_pos + next_match.start()].strip()
+                else:
+                    page_content = content_context[start_pos:].strip()
+
+                pages_raw.append({
+                    'page_num': page_num,
+                    'title': title,
+                    'content': page_content,
+                    'pattern_type': pattern_type
+                })
+
+        if not pages_raw:
+            logger.warning("未能解析出分页结构")
+            return None
+
+        # 按页码排序
+        pages_raw.sort(key=lambda x: x['page_num'])
+
+        logger.info(f"✅ 解析到 {len(pages_raw)} 页，正在提取详细内容...")
+
+        # 解析每一页的详细内容
+        outline = []
+        for page in pages_raw:
+            page_content = page['content']
+
+            # 提取副标题
+            subtitle_match = re.search(r'\*\*副标题\*\*[:：]?\s*(.+?)(?=\n|$)', page_content, re.IGNORECASE)
+            subtitle = subtitle_match.group(1).strip() if subtitle_match else ""
+
+            # 提取演讲备注
+            speaker_notes_match = re.search(r'\*\*演讲备注\*\*[:：]?\s*\n(.*?)(?=\n\*\*|$)', page_content, re.DOTALL | re.IGNORECASE)
+            speaker_notes = speaker_notes_match.group(1).strip() if speaker_notes_match else ""
+
+            # 提取正文要点 (bullet points)
+            bullet_pattern = r'^\s*[-*]\s+(.+)$'
+            bullets = re.findall(bullet_pattern, page_content, re.MULTILINE)
+
+            # 提取数据表格
+            table_pattern = r'(\|[^\n]+\|[^\n]+\n\|[-:\s|]+\|[^\n]*(?:\n\|[^\n]+\|)*)'
+            table_matches = re.findall(table_pattern, page_content)
+
+            # 推断页面类型
+            page_type = "content"
+            title_lower = page['title'].lower()
+            if any(kw in title_lower for kw in ["封面", "标题", "cover", "title"]):
+                page_type = "cover"
+            elif any(kw in title_lower for kw in ["目录", "大纲", "toc", "outline"]):
+                page_type = "toc"
+            elif any(kw in title_lower for kw in ["vs", "对比", "comparison"]):
+                page_type = "comparison"
+            elif any(kw in title_lower for kw in ["框架", "模型", "framework"]):
+                page_type = "framework"
+            elif any(kw in title_lower for kw in ["流程", "步骤", "flowchart"]):
+                page_type = "flowchart"
+            elif table_matches:
+                page_type = "data"
+
+            # 构建 JSON 结构
+            page_json = {
+                "page_num": page['page_num'],
+                "type": page_type,
+                "text_content": {
+                    "headline": page['title'],
+                    "subheadline": subtitle,
+                    "body": bullets if bullets else []
+                },
+                "speaker_notes": speaker_notes,
+                "visual_suggestion": f"根据标题「{page['title']}」设计画面"
+            }
+
+            # 如果有表格，添加到 body 中
+            if table_matches:
+                page_json["table_data"] = table_matches[0]
+
+            outline.append(page_json)
+
+        logger.info(f"✅ 完整大纲解析完成，共 {len(outline)} 页，100%保留原文")
+        return outline
+
     def _extract_core_logic(self, content_context: str, constraints: Dict) -> str:
         """
         [Step 1/2] 从海量文本中提取深度叙事蓝图 (Narrative Blueprint)
@@ -412,14 +614,37 @@ class NarrativeAgent:
                     logger.error(f"逻辑骨架提取最终失败: {e}")
                     raise
 
-    def generate_narrative_outline(self, content_context: str, constraints: Dict, content_file_path: str = None) -> List[Dict]:
+    def generate_narrative_outline(self, content_context: str, constraints: Dict, content_file_path: str = None, reuse_existing: bool = False) -> List[Dict]:
         """
-        生成深度叙事大纲 (Two-Step Pipeline)
+        生成深度叙事大纲 (Three-Mode Pipeline)
 
-        智能判断两种模式：
-        1. 如果用户提供了成熟的分页大纲 → 解析模式（保留原标题）
-        2. 如果用户提供了无结构内容 → 智能叙事模式（LLM 改写）
+        智能判断三种模式：
+        1. 完整大纲直接复用模式（新增）- 100%保留原文，不调用LLM
+        2. 成熟大纲解析模式（现有）- 保留原标题，LLM转换格式
+        3. 智能叙事模式（现有）- LLM生成叙事架构
         """
+
+        # 🔍 检测是否是完整的 content_plan.md
+        complete_plan_info = self.detect_complete_content_plan(content_context)
+
+        if reuse_existing or (complete_plan_info["is_complete"] and complete_plan_info["confidence"] >= 0.8):
+            logger.info("✅ 检测到完整大纲，使用【直接复用模式】（100%保留原文，不调用LLM）")
+
+            # 纯文本解析，不调用 LLM
+            parsed_outline = self._parse_complete_content_plan(content_context, content_file_path)
+
+            if parsed_outline:
+                # 仅进行图片增强（不修改文本内容）
+                base_dir = os.path.dirname(os.path.abspath(content_file_path)) if content_file_path else None
+                raw_source_images = self.extract_images_from_markdown(content_context, base_dir=base_dir)
+
+                analyzed_images = []
+                if raw_source_images:
+                    logger.info(f"🧠 Narrative Agent: 从源文档找到 {len(raw_source_images)} 张图片，正在进行语义过滤...")
+                    selector = ImageSelector(self.client)
+                    analyzed_images = selector.batch_analyze_images(raw_source_images)
+
+                return self._enrich_outline_with_visual_decisions(parsed_outline, analyzed_images)
 
         # 🔍 检测用户输入是否已有成熟的分页大纲
         has_structured_outline = self.detect_structured_outline(content_context)

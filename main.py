@@ -153,7 +153,7 @@ def _resolve_project_dir(content_file: str, output_name: str = None) -> tuple[st
 
 def generate_content_plan(content_file: str, template_file: str = None,
                           logo_file: str = None, output_name: str = None, page_count: int = None,
-                          briefing: str = None):
+                          briefing: str = None, reuse_existing: bool = False):
     """
     Phase 1.1: 内容规划阶段。
     生成 content_plan.md，仅供审阅大纲内容，不涉及视觉风格。
@@ -274,7 +274,26 @@ def generate_content_plan(content_file: str, template_file: str = None,
 
     # Step 3: 生成叙事大纲
     print("\n📝 [Step 3/3] 正在构建叙事架构...")
-    narrative_outline = narrative_agent.generate_narrative_outline(content_context, constraints, content_file_path=content_file)
+
+    # 预检测：如果检测到完整大纲且未指定 --reuse-existing，提示用户
+    if not reuse_existing:
+        complete_plan_info = NarrativeAgent.detect_complete_content_plan(content_context)
+        if complete_plan_info["is_complete"] and complete_plan_info["confidence"] >= 0.8:
+            print(f"""
+✅ 检测到完整大纲（{complete_plan_info['page_count']}页）
+   - 包含标题/正文/备注: {'是' if complete_plan_info['has_speaker_notes'] else '否'}
+   - 包含数据表格: {'是' if complete_plan_info['has_tables'] else '否'}
+   - 置信度: {complete_plan_info['confidence']:.1%}
+
+💡 建议使用 --reuse-existing 参数直接复用，避免内容被修改：
+   python3 -m tools.nano_banana_ppt.main plan-content "{content_file}" --reuse-existing
+
+⏳ 继续执行将使用"解析模式"（可能会修改内容）...
+            """)
+            import time
+            time.sleep(2)  # 给用户2秒时间看到提示
+
+    narrative_outline = narrative_agent.generate_narrative_outline(content_context, constraints, content_file_path=content_file, reuse_existing=reuse_existing)
     print(f"✅ 叙事大纲生成完成，共 {len(narrative_outline)} 页")
 
     meta = {
@@ -505,7 +524,7 @@ def generate_plan(content_file: str, template_file: str = None,
     Legacy 入口：与 plan-content 行为一致，仅生成 content_plan.md 并停止。
     请审阅 content_plan.md 确认后，再运行 plan-visual。
     """
-    return generate_content_plan(content_file, template_file, logo_file, output_name, page_count, briefing)
+    return generate_content_plan(content_file, template_file, logo_file, output_name, page_count, briefing, reuse_existing=False)
 
 
 # ──────────────────────────────────────────────
@@ -708,6 +727,19 @@ def execute_from_plan(plan_input: str, output_name: str = None, resolution: str 
 
     plan_json_path = Path(proj_dir) / "plan.json"
 
+    # 问题4: 内容一致性校验
+    if not force:
+        from pathlib import Path
+        issues = validate_content_visual_consistency(Path(proj_dir))
+        if issues:
+            print("\n❌ 发现内容不一致问题:")
+            for issue in issues:
+                print(f"   - {issue}")
+            print("\n请先修复这些问题，或使用 --force 跳过校验")
+            return None
+        else:
+            print("\n✅ 内容一致性校验通过")
+
     # 智能检测文件修改时间，自动决定是否需要重新生成
     use_existing_plan = False
     if plan_json_path.exists() and not regenerate:
@@ -860,7 +892,7 @@ def auto_generate_ppt(content_file: str, template_file: str = None,
     非交互环境（如 Cursor Shell/Agent）下自动停止，提示用户手动执行下一步。
     """
     # ── Phase 1.1: 内容规划 ──
-    content_md = generate_content_plan(content_file, template_file, logo_file, output_name, page_count=page_count, briefing=briefing)
+    content_md = generate_content_plan(content_file, template_file, logo_file, output_name, page_count=page_count, briefing=briefing, reuse_existing=False)
     if not content_md:
         return
 
@@ -1033,6 +1065,7 @@ def _parse_cli_args(args):
     regenerate = False
     no_blend = False
     force = False
+    reuse_existing = False
     i = 0
     while i < len(args):
         a = args[i]
@@ -1065,6 +1098,9 @@ def _parse_cli_args(args):
         elif a == "--force":
             force = True
             i += 1
+        elif a == "--reuse-existing":
+            reuse_existing = True
+            i += 1
         elif a == "--slides":
             i += 1
             nums = []
@@ -1081,7 +1117,7 @@ def _parse_cli_args(args):
         else:
             rest.append(a)
             i += 1
-    return rest, resolution, slides, pages, style, briefing, reassemble, content_only, regenerate, no_blend, force
+    return rest, resolution, slides, pages, style, briefing, reassemble, content_only, regenerate, no_blend, force, reuse_existing
 
 
 if __name__ == "__main__":
@@ -1089,7 +1125,7 @@ if __name__ == "__main__":
         print_usage()
         sys.exit(1)
 
-    rest, resolution, slides, pages, style, briefing, reassemble, content_only, regenerate, no_blend, force = _parse_cli_args(sys.argv[1:])
+    rest, resolution, slides, pages, style, briefing, reassemble, content_only, regenerate, no_blend, force, reuse_existing = _parse_cli_args(sys.argv[1:])
     command = rest[0].lower() if rest else ""
 
     if command == "plan" or command == "plan-content":
@@ -1103,7 +1139,7 @@ if __name__ == "__main__":
         if command == "plan":
             generate_plan(content, template, logo, out_name, page_count=pages, briefing=briefing)
         else:
-            generate_content_plan(content, template, logo, out_name, page_count=pages, briefing=briefing)
+            generate_content_plan(content, template, logo, out_name, page_count=pages, briefing=briefing, reuse_existing=reuse_existing)
 
     elif command == "plan-visual":
         if len(rest) < 2:
