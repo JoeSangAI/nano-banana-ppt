@@ -160,9 +160,9 @@ class PPTGenerator:
         from openai import OpenAI
         self._api_key = api_key
         self.client = OpenAI(api_key=api_key, base_url=api_base) if api_base else OpenAI(api_key=api_key)
-        self.text_model = "gemini-3-flash-preview"
-        self.visual_director_model = "gemini-3.1-pro-preview"
-        self.image_model = "gemini-3.1-flash-image-preview"
+        self.text_model = "MiniMax-M2.7"
+        self.visual_director_model = "MiniMax-M2.7"
+        self.image_model = "gemini-3.1-flash-image-preview"  # 图片生成模型保持不变
 
         # 图片生成客户端（DeerAPI）
         image_gen_key = os.getenv("IMAGE_GEN_API_KEY") or api_key

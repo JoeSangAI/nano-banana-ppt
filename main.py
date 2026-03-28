@@ -346,6 +346,19 @@ def generate_visual_plan(plan_dir: str, style_preference: str = None):
     )
     manifesto_text = manifesto_dict.get("chinese_proposal", "")
 
+    # 写回 manifesto_bans 和 visual_diversity_strategy 到 _content_state.json
+    state_file = project_dir / "_content_state.json"
+    if state_file.exists():
+        with open(state_file, 'r', encoding='utf-8') as f:
+            state = json.load(f)
+    else:
+        state = {}
+
+    state["manifesto_bans"] = manifesto_dict.get("english_cliche_bans", "")
+    state["visual_diversity_strategy"] = manifesto_dict.get("visual_diversity_strategy", "")
+    with open(state_file, 'w', encoding='utf-8') as f:
+        json.dump(state, f, ensure_ascii=False, indent=2)
+
     # Step 4: 生成人类可审阅的 master_plan.md
     print("\n📋 [Step 4/4] 正在生成完整审阅计划...")
     content_md_path_str = str(content_md_path) if content_md_path.exists() else None
@@ -571,12 +584,24 @@ def execute_from_plan(plan_input: str, output_name: str = None, resolution: str 
         return None
 
     plan_json_path = Path(proj_dir) / "plan.json"
-    # 只要 plan.json 存在且未强制重新生成，总是复用（slide_filter、reassemble_only 都复用）
-    use_existing_plan = plan_json_path.exists() and not regenerate
+
+    # 智能检测文件修改时间，自动决定是否需要重新生成
+    use_existing_plan = False
+    if plan_json_path.exists() and not regenerate:
+        if from_review:
+            md_mtime = Path(plan_path).stat().st_mtime
+            json_mtime = plan_json_path.stat().st_mtime
+            if json_mtime > md_mtime:
+                use_existing_plan = True
+                print("\n📄 复用已有 plan.json（比 master_plan.md 更新）")
+            else:
+                print("\n📄 检测到 master_plan.md 已更新，重新生成 plan.json")
+        else:
+            use_existing_plan = True
+            print("\n📄 复用已有 plan.json（如需重新生成提示词，请加 --regenerate 参数）")
 
     if from_review:
         if use_existing_plan:
-            print("\n📄 复用已有 plan.json（如需重新生成提示词，请加 --regenerate 参数）")
             plan_path = str(plan_json_path)
         else:
             reset_session()
@@ -870,7 +895,7 @@ Nano Banana 2 PPT Generator
 def _parse_cli_args(args):
     """解析 CLI 参数，提取 --resolution、--slides、--pages、--style、--briefing、--reassemble、--content-only、--regenerate、--no-blend"""
     rest = []
-    resolution = None
+    resolution = "1K"  # 默认值为 1K
     slides = None
     pages = None
     style = None
@@ -892,7 +917,9 @@ def _parse_cli_args(args):
             briefing = args[i + 1]
             i += 2
         elif a == "--resolution" and i + 1 < len(args):
-            resolution = args[i + 1]
+            resolution = args[i + 1].upper()  # 统一转换为大写
+            if resolution not in ("1K", "2K", "4K"):
+                resolution = "1K"  # 无效值时使用默认值
             i += 2
         elif a == "--reassemble":
             reassemble = True

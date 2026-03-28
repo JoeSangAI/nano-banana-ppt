@@ -24,8 +24,8 @@ class NarrativeAgent:
             timeout=300.0,
             max_retries=3
         )
-        self.model = "gemini-3.1-pro-preview" # 用于提取深度蓝图
-        self.outline_model = "gemini-2.5-flash" # 用于大纲 JSON 生成，优先稳定性
+        self.model = "MiniMax-M2.7" # 统一使用 MiniMax M2.7
+        self.outline_model = "MiniMax-M2.7" # 统一使用 MiniMax M2.7
         self.project_dir = project_dir  # 项目目录，用于保存下载的图片
 
     @staticmethod

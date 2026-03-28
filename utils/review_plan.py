@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Any
 
 logger = logging.getLogger(__name__)
 
-REVIEW_MD_FILENAME = "visual_plan.md"
+REVIEW_MD_FILENAME = "master_plan.md"
 
 
 def build_master_plan_from_content_plan(
@@ -137,12 +137,12 @@ def generate_design_manifesto(
 
     try:
         resp = chat_completion_with_fallback(
-            client, model_fallback=model_fallback or ["gemini-3.1-pro-preview"],
+            client, model_fallback=model_fallback or ["MiniMax-M2.7"],
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.7,
+            temperature=0.3,  # 降低温度以提高稳定性
             response_format={"type": "json_object"}
         )
         content = resp.choices[0].message.content.strip()
@@ -256,12 +256,12 @@ JSON only, no explanation:"""
         response = chat_completion_with_fallback(
             client,
             model="MiniMax-M2.7",
-            model_fallback=MODEL_FALLBACK_CHAIN,
+            model_fallback=["MiniMax-M2.7"],  # 统一使用 MiniMax M2.7
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            temperature=0.7
+            temperature=0.3  # 降低温度以提高稳定性
         )
         import json, re
         content = response.choices[0].message.content.strip()
@@ -379,9 +379,7 @@ def build_content_review_md(
             lines.append("")
 
         native_images = page.get("native_images", [])
-        if not native_images and page.get("native_image"):
-            native_images = [page.get("native_image")]
-            
+
         if native_images:
             lines.append("- **📥 原生图片**：")
             for idx, img in enumerate(native_images):
@@ -601,9 +599,7 @@ def build_review_md(
             lines.append("")
 
         native_images = page.get("native_images", [])
-        if not native_images and page.get("native_image"):
-            native_images = [page.get("native_image")]
-            
+
         if native_images:
             lines.append("- **📥 原生图片**：")
             for idx, img in enumerate(native_images):
