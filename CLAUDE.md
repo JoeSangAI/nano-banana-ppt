@@ -22,7 +22,17 @@ OPENAI_API_BASE=https://your-proxy/v1
 
 ## CLI Commands
 
-The module must be invoked from the **parent directory** of `nano-banana-ppt/` (i.e., the directory containing `tools/`), since `main.py` uses `sys.path.insert` to resolve `tools.nano_banana_ppt.*`.
+**main.py 自动处理所有路径问题** — 无需关心工作目录或模块路径，任意位置均可直接运行。
+
+```bash
+# 从任意目录直接运行（推荐）
+python3 /Users/Joe_1/Desktop/nano-banana-ppt/main.py <command> ...
+
+# 或通过 skills 目录运行
+cd ~/.claude/skills/nano-banana-ppt && python3 main.py <command> ...
+
+# 从 Desktop 使用模块方式运行
+cd /Users/Joe_1/Desktop && python3 -m tools.nano_banana_ppt.main <command> ...
 
 ```bash
 # Phase 1a: Generate content outline (saves content_plan.md)
@@ -60,7 +70,11 @@ pytest tests/test_llm_client.py -v
 pytest tests/test_image_selector_logic.py::test_name -v
 ```
 
-Tests import from `tools.nano_banana_ppt.*`, so run pytest from the parent directory of this repo.
+Tests import from `tools.nano_banana_ppt.*`, so run pytest from the Desktop directory (which has the `tools/` symlink):
+
+```bash
+cd /Users/Joe_1/Desktop && pytest tests/
+```
 
 ## Architecture
 
@@ -95,12 +109,12 @@ nano-banana-ppt/
 
 ### Key Design Patterns
 
-- **Module path**: The package is designed to live at `tools/nano_banana_ppt/` inside a larger workspace. All internal imports use `tools.nano_banana_ppt.*`.
+- **Auto-bootstrap**: `main.py` automatically resolves its own location and sets up the correct `sys.path` / `tools/` structure, regardless of where it is invoked from.
 - **API client**: All agents use `openai.OpenAI` pointed at a Gemini-compatible endpoint. Image generation uses the native Gemini REST API (not OpenAI images).
 - **Model fallback**: `utils/llm_client.py` maintains a session-scoped set of 429-exhausted models and falls back through `MODEL_FALLBACK_CHAIN` automatically.
 - **Seed-then-parallel execution**: `executor.py` first generates "seed" slides (first of each type: `content`, `section`, `hero`) serially to establish visual consistency masters, then generates remaining slides in parallel using those masters as `reference_images`.
 - **All-Blend architecture**: Native images from source documents are never hard-overlaid; they are passed as `reference_images` to Gemini with a redraw prompt for seamless integration.
-- **Output structure**: All artifacts land in `output/ppt/{YYYYMMDD}_{project_name}/` relative to the working directory.
+- **Output structure**: All artifacts land in `~/Desktop/AI output/ppt/{YYYYMMDD}_{project_name}/`.
 
 ### Available Style Presets (`--style`)
 

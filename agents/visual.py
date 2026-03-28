@@ -252,7 +252,7 @@ Ensure the palette has high contrast for text reading.
             if self.prompt_mode == "minimal":
                 font_constraint = f"\n- Typography: Use {fonts_str} for consistency."
             else:
-                font_constraint = f"\n- **Typography (STRICTLY ENFORCED)**: You MUST use these exact fonts on EVERY single slide: {fonts_str}. Headings must ALWAYS use the heading font, and body text must ALWAYS use the body font. Never change font families between slides. NEVER use random or generic fonts."
+                font_constraint = f"\n- Typography (STRICTLY ENFORCED): You MUST use these exact fonts on EVERY single slide: {fonts_str}. Headings must ALWAYS use the heading font, and body text must ALWAYS use the body font. Never change font families between slides. NEVER use random or generic fonts."
 
         manifesto = style_config.get('manifesto', '')
         if manifesto:
@@ -262,7 +262,7 @@ Ensure the palette has high contrast for text reading.
             else:
                 # Verbose mode: full manifesto with detailed instructions
                 manifesto_block = (
-                    f"\n- **Design System Manifesto (Art Director)**:\n{manifesto}\n\n"
+                    f"\n- Design System Manifesto (Art Director):\n{manifesto}\n\n"
                     "INSTRUCTION: Follow the color strategy and mood direction above. Adhere to the 'Cliche Avoidance' bans (these ban specific clichéd elements, NOT entire categories like people, architecture, or nature). "
                     "Beyond these constraints, you have FULL creative freedom and are STRONGLY ENCOURAGED to use diverse, figurative visual metaphors: "
                     "human silhouettes, architectural scenes, natural landscapes, dramatic lighting on real-world objects, aerial perspectives, close-up textures of meaningful materials, etc. "
@@ -282,9 +282,9 @@ Ensure the palette has high contrast for text reading.
 - Maintain visual consistency across all slides."""
         else:
             design_system = f"""【Visual Design System】
-- **Global Style**: {style_definition}
-- **Color Palette**: {color_constraint}{accent_usage_block}
-- **Consistency**: ALL slides must use the same palette and fonts for a cohesive deck.{font_constraint}{manifesto_block}"""
+- Global Style: {style_definition}
+- Color Palette: {color_constraint}{accent_usage_block}
+- Consistency: ALL slides must use the same palette and fonts for a cohesive deck.{font_constraint}{manifesto_block}"""
 
         # 5. Global Context Injection (Summary of the whole deck)
         # Create a condensed outline string
@@ -352,7 +352,7 @@ Ensure the palette has high contrast for text reading.
                 continue
 
             # 3. Text rendering block — soft guidance, let the model decide hierarchy
-            render_text_block = "**TEXT CONTENT TO DISPLAY (render ONLY these, nothing else):**\n"
+            render_text_block = "TEXT CONTENT TO DISPLAY (render ONLY these, nothing else):\n"
             render_text_block += "(Design goal: the reader should instantly see what matters most on this slide. Use size, weight, and color differences from the palette to create natural visual hierarchy — you decide how.)\n\n"
             if text_content.get('headline'):
                 render_text_block += f'Headline: "{text_content["headline"]}"\n'
@@ -434,7 +434,7 @@ Ensure the palette has high contrast for text reading.
                 native_image_constraint = "\n\n【Native Image & Anti-Hallucination Constraints (EXTREMELY CRITICAL)】\n"
                 if has_blend:
                     native_image_constraint += "1. A reference photo will be provided to BLEND into this scene. Your prompt MUST explicitly state: 'seamlessly blend the provided reference subject into the background environment'.\n"
-                    native_image_constraint += "2. **DO NOT INVENT IRRELEVANT COMMERCIAL OBJECTS**: The image generation model tends to hallucinate magazines, watches, advertisements, or product placements when given 'editorial' or 'premium' prompts. Your prompt MUST explicitly FORBID generating commercial products, brand items, or advertisements that are not described in the text content. However, contextually appropriate scene elements (people silhouettes, architecture, nature, atmospheric objects that serve the slide's metaphor) ARE allowed and encouraged for visual richness.\n"
+                    native_image_constraint += "2. DO NOT INVENT IRRELEVANT COMMERCIAL OBJECTS: The image generation model tends to hallucinate magazines, watches, advertisements, or product placements when given 'editorial' or 'premium' prompts. Your prompt MUST explicitly FORBID generating commercial products, brand items, or advertisements that are not described in the text content. However, contextually appropriate scene elements (people silhouettes, architecture, nature, atmospheric objects that serve the slide's metaphor) ARE allowed and encouraged for visual richness.\n"
                 if has_overlay:
                     native_image_constraint += "3. A separate screenshot or graphic will be OVERLAID on top of the final image later. You MUST include an instruction to leave a massive, completely empty, clean safe zone (flat gradient or solid color, NO graphics, NO text, NO objects) for this overlay.\n"
 
@@ -442,23 +442,22 @@ Ensure the palette has high contrast for text reading.
             system_prompt = (
                 "You are an expert Prompt Engineer for Nano Banana 2 (Gemini Image). "
                 "Your top priority is maintaining strict visual and typographic consistency across all generated slides. "
-                "OUTPUT FORMAT: You must output EXACTLY one plain-text string — no markdown, no bullet markers (• - *), "
-                "no headings (#), no bold/italic (* or **), no code blocks (```). "
-                "The image-generation prompt itself may contain commas, periods, and Chinese characters, but the output wrapper must be plain text only."
+                "OUTPUT FORMAT: You must output EXACTLY one plain-text string. "
+                "DO NOT use any markup symbols: no asterisks, no hashes, no backticks, no bullet markers, no bold, no italic, no code blocks."
             )
 
             if template_info:
                 prompt_mode = f"""【Mode: STYLE CLONING & TEMPLATE SAFE ZONES】
 - Match the COLOR PALETTE, FONTS, and VISUAL TONE of the reference image.
-- Since a template is being used, generate graphics that act as a thematic backdrop or localized illustration. 
-- STRICTLY leave vast empty negative space where template text/content resides. 
-- Blend the edges of any generated illustration into the background color. 
+- Since a template is being used, generate graphics that act as a thematic backdrop or localized illustration.
+- STRICTLY leave vast empty negative space where template text/content resides.
+- Blend the edges of any generated illustration into the background color.
 - Do not generate full-bleed chaotic graphics that overlap text.
-- Assigned layout for this page: **{layout_name}** — {layout_desc}"""
+- Assigned layout for this page: [{layout_name}] — {layout_desc}"""
             else:
                 prompt_mode = f"""【Mode: AI MINTING】
 - Create a cohesive, professional slide matching the Global Style.
-- Assigned layout for this page: **{layout_name}** — {layout_desc}
+- Assigned layout for this page: [{layout_name}] — {layout_desc}
 - VISUAL RICHNESS: Use figurative, concrete visual metaphors (landscapes, architecture, human silhouettes, natural phenomena, meaningful objects) rather than defaulting to abstract geometric shapes. The visual subject should directly serve the slide's specific message."""
 
             manifesto_ban = "\n- ENFORCE MANIFESTO BANS: Avoid the specific clichéd elements listed in 'Cliche Avoidance' (e.g., glowing brains, 3D funnels). Note: this does NOT ban people, architecture, nature, or real-world objects — those are encouraged for visual richness." if manifesto else ""
@@ -490,7 +489,7 @@ Ensure the palette has high contrast for text reading.
 - Do NOT add decorative text, watermarks, or labels not in the TEXT CONTENT section.
 - Do NOT repeat the exact same text multiple times. If the text content has two bullet points, do NOT render them four times. Avoid hallucinating duplicate text blocks.
 - Do NOT use random, inconsistent fonts. Typography MUST strictly adhere to the defined font families and weights in the Global Style.
-- **TABLE RENDERING (CRITICAL)**: If a table is present in the TEXT CONTENT section, you MUST render the COMPLETE table with ALL rows and ALL columns. Do NOT summarize, truncate, or omit any row or column. Each cell's text must be clearly legible. The table should occupy a significant portion of the slide layout.{manifesto_ban}"""
+- TABLE RENDERING (CRITICAL): If a table is present in the TEXT CONTENT section, you MUST render the COMPLETE table with ALL rows and ALL columns. Do NOT summarize, truncate, or omit any row or column. Each cell's text must be clearly legible. The table should occupy a significant portion of the slide layout.{manifesto_ban}"""
 
             if self.prompt_mode == "minimal":
                 # Minimal mode: simplified prompt structure
@@ -511,7 +510,7 @@ Ensure the palette has high contrast for text reading.
 {neg_constraints}
 
 【Output】
-CRITICAL: Output ONLY the raw image-generation prompt text. No markdown formatting (no **bold**, *italic*, bullet markers • -, # headings, ``` code blocks). Pure plain text only."""
+CRITICAL: Output ONLY the raw image-generation prompt text. No markdown formatting (no bold, no italic, no bullet markers, no headings, no code blocks). Pure plain text only."""
             else:
                 # Verbose mode: detailed prompt structure
                 user_prompt = f"""Generate a high-fidelity image generation prompt for a PPT slide.
@@ -519,7 +518,7 @@ CRITICAL: Output ONLY the raw image-generation prompt text. No markdown formatti
 {design_system}
 
 {prompt_mode}
-- **Reference Image**: Using '{os.path.basename(reference_image_path) if reference_image_path else "None"}' as style anchor.
+- Reference Image: Using '{os.path.basename(reference_image_path) if reference_image_path else "None"}' as style anchor.
 {seed_guidance}
 
 【Global Context (For Consistency)】
@@ -545,7 +544,7 @@ The "User-Confirmed Visual Description" above is the EXACT visual the user has a
 {native_image_constraint}
 
 【Instruction】
-1. **{type_instruction}**
+1. {type_instruction}
 2. Describe the visual scene in detail.
 3. Plan text placement organically based on the meaning of the content.
 
@@ -554,7 +553,7 @@ The "User-Confirmed Visual Description" above is the EXACT visual the user has a
 {neg_constraints}
 
 【Output】
-CRITICAL: Output ONLY the raw image-generation prompt text. No markdown formatting (no **bold**, *italic*, bullet markers • -, # headings, ``` code blocks). Pure plain text only."""
+CRITICAL: Output ONLY the raw image-generation prompt text. No markdown formatting (no bold, no italic, no bullet markers, no headings, no code blocks). Pure plain text only."""
 
             tasks.append({
                 'skip_llm': False,
@@ -644,9 +643,8 @@ CRITICAL: Output ONLY the raw image-generation prompt text. No markdown formatti
 
             tpl_system_prompt = (
                 "You are an expert Prompt Engineer for Nano Banana 2 (Gemini Image). "
-                "OUTPUT FORMAT: You must output EXACTLY one plain-text string — no markdown, no bullet markers (• - *), "
-                "no headings (#), no bold/italic (* or **), no code blocks (```). "
-                "Pure plain text only."
+                "OUTPUT FORMAT: You must output EXACTLY one plain-text string. "
+                "DO NOT use any markup symbols: no asterisks, no hashes, no backticks, no bullet markers, no bold, no italic, no code blocks."
             )
 
             tpl_shared_prompt = f"""Generate a high-fidelity image generation prompt for a BLANK TEMPLATE slide background.
@@ -666,7 +664,7 @@ Think of it as a premium, barely-decorated editorial page — restrained, spacio
 {tpl_neg_constraints}
 
 【Output】
-CRITICAL: Output ONLY the raw image-generation prompt text. No markdown formatting (no **bold**, *italic*, bullet markers • -, # headings, ``` code blocks). Pure plain text only."""
+CRITICAL: Output ONLY the raw image-generation prompt text. No markdown formatting (no bold, no italic, no bullet markers, no headings, no code blocks). Pure plain text only."""
 
             def generate_template(tpl_type, title, layout):
                 try:

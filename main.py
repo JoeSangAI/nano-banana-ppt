@@ -2,18 +2,13 @@
 Auto Pipeline (RFC v2.2)
 全自动 PPT 生成入口：支持 plan / execute 两阶段调用，兼容 Agent 和交互式终端
 
-目录结构:
-  output/
-    ppt/
-      {date}_{project_name}/
-        {date}_{project_name}.pptx   ← 最终交付的 PPTX
-        content_plan.md
-        master_plan.md
-        plan.json
-        template_assets/
-          ref_cover.png ...
-        slides/
-          slide_01.png ...
+输出目录: ~/Desktop/AI output/ppt/{date}_{project_name}/
+  {date}_{project_name}.pptx   ← 最终交付的 PPTX
+  content_plan.md              ← 内容大纲
+  master_plan.md               ← 视觉计划
+  plan.json                    ← 技术执行计划
+  template_assets/             ← 模板提取物
+  slides/                      ← 生成的页面图片
 """
 import os
 import sys
@@ -54,12 +49,37 @@ def _find_and_load_env() -> bool:
     return False
 
 
-# 在导入其他模块前加载环境变量
+# ── Auto-bootstrap: 确保无论从哪个目录调用，模块路径都正确 ──────────────────────
+# 解析 skill 的实际位置（跟随 symlink 到真实路径）
+_actual_skill_dir = Path(__file__).resolve().parent  # e.g. /Users/Joe_1/Desktop/nano-banana-ppt
+_cwd = Path.cwd()
+
+# 判断当前是否在一个有效工作区（有 tools/ 目录）
+_cwd_has_tools = (_cwd / "tools").is_dir() or (_cwd / "tools" / "nano_banana_ppt").is_symlink()
+
+# 判断当前是否就在 skill 目录内
+_in_skill_dir = _cwd == _actual_skill_dir or _cwd.resolve() == _actual_skill_dir
+
+# 如果在 skill 目录内，或当前工作区没有 tools/ 结构 → 自动切换到 skill 所在目录
+if _in_skill_dir or not _cwd_has_tools:
+    # 切换到 skill 的父目录（期望是 Desktop 或其他有 tools/ 的工作区）
+    _potential_workspace = _actual_skill_dir.parent  # e.g. Desktop
+    _workspace_has_tools = (_potential_workspace / "tools").is_dir()
+
+    if _workspace_has_tools:
+        os.chdir(_potential_workspace)
+        sys.path.insert(0, str(_potential_workspace.resolve()))
+    else:
+        # 兜底：在 skill 目录本身创建 tools/ 结构
+        _tools_link = _actual_skill_dir / "tools" / "nano_banana_ppt"
+        _tools_link.parent.mkdir(parents=True, exist_ok=True)
+        if not _tools_link.exists():
+            _tools_link.symlink_to(_actual_skill_dir)
+        os.chdir(_actual_skill_dir)
+        sys.path.insert(0, str(_actual_skill_dir.resolve()))
+
+# ── 环境变量加载（在 bootstrap 之后）───────────────────────────────────────────
 _find_and_load_env()
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-
-from tools.nano_banana_ppt.agents.narrative import NarrativeAgent
 from tools.nano_banana_ppt.agents.visual import VisualAgent
 from tools.nano_banana_ppt.agents.template import TemplateAgent
 from tools.nano_banana_ppt.core.executor import execute_plan
@@ -75,14 +95,54 @@ from tools.nano_banana_ppt.utils.review_plan import (
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# 固定的输出目录
+DEFAULT_OUTPUT_BASE = Path.home() / "Desktop" / "AI output" / "ppt"
+
 
 def _resolve_project_dir(content_file: str, output_name: str = None) -> tuple[str, Path]:
     """根据内容文件或指定名称，生成项目名和项目目录"""
-    name = output_name or Path(content_file).stem
     from datetime import date
     date_prefix = date.today().strftime("%Y%m%d")
-    dir_name = f"{date_prefix}_{name}"
-    project_dir = Path("output") / "ppt" / dir_name
+
+    # 固定的输出目录
+    OUTPUT_BASE = Path.home() / "Desktop" / "AI output" / "ppt"
+
+    # 如果用户指定了 output_name，直接使用
+    if output_name:
+        name = output_name
+    else:
+        # 从 content_file 路径提取名称
+        content_path = Path(content_file)
+
+        # 检查是否已经在 output 目录中（用户可能在已有项目目录下运行）
+        # 例如: /Users/Joe_1/Desktop/AI output/ppt/20260327_内容电商大逃杀/content_plan.md
+        # 或: /Users/Joe_1/Desktop/AI output/ppt/20260327_20260327_内容电商大逃杀时代/content_plan.md
+        parent_parts = content_path.parts
+        for i, part in enumerate(parent_parts):
+            # 跳过日期前缀的目录（如 20260327_内容电商大逃杀 或 20260327_20260327_xxx）
+            if i > 0 and parent_parts[i-1] == "ppt" and part.startswith("202"):
+                # 这是一个日期命名的项目目录，提取主题名称
+                # 格式可能是: 20260327_主题名 或 20260327_20260327_主题名
+                name_part = "_".join(parent_parts[i:]).replace("_content_plan", "").replace("_content", "")
+                # 去除开头的日期前缀
+                name_part = re.sub(r'^\d{8}_', '', name_part)
+                name_part = re.sub(r'^\d{8}_\d{8}_', '', name_part)
+                if name_part:
+                    name = name_part
+                    break
+        else:
+            # 没有匹配到日期格式的目录，使用文件名（去掉扩展名和 content_plan 后缀）
+            name = content_path.stem
+            name = re.sub(r'_content_plan$', '', name)
+            name = re.sub(r'_content$', '', name)
+
+    # 如果名称以日期开头，避免重复
+    if re.match(r'^\d{8}_', name):
+        dir_name = name
+    else:
+        dir_name = f"{date_prefix}_{name}"
+
+    project_dir = OUTPUT_BASE / dir_name
     project_dir.mkdir(parents=True, exist_ok=True)
     return name, project_dir
 
@@ -254,7 +314,8 @@ def generate_content_plan(content_file: str, template_file: str = None,
         title = tc.get('headline') or p.get('title', '')
         print(f"  P{p_num} [{p_type.upper():8s}] {title}")
     print(f"{'='*60}")
-    print(f"\n⏸️  确认无误后运行: python main.py plan-visual \"{project_dir}\" [可选: --style xxx]")
+    print(f"\n⛔ STOP — 请审阅 content_plan.md 确认无误后再继续！")
+    print(f"   下一步: python main.py plan-visual \"{project_dir}\" [--style xxx]")
 
     return str(content_md_path)
 
@@ -268,9 +329,38 @@ def generate_visual_plan(plan_dir: str, style_preference: str = None):
     state_file = project_dir / "_content_state.json"
     review_md_path = project_dir / REVIEW_MD_FILENAME  # master_plan.md
 
+    # 如果 _content_state.json 不存在，尝试从 content_plan.md 重建
     if not state_file.exists():
-        print(f"❌ 错误: 找不到内容状态文件 {state_file}。请先运行 plan-content。")
-        return None
+        content_md_path = project_dir / "content_plan.md"
+        if content_md_path.exists():
+            print(f"📄 检测到 content_plan.md 但无状态文件，自动重建 _content_state.json...")
+            with open(content_md_path, 'r', encoding='utf-8') as f:
+                md_text = f.read()
+            parsed = parse_review_md(md_text)
+            if parsed and parsed.get("pages"):
+                # 从 content_plan.md 提取主题名作为项目名
+                project_name = project_dir.name
+                # 去掉日期前缀
+                project_name = re.sub(r'^\d{8}_', '', project_name)
+                project_name = re.sub(r'^\d{8}_\d{8}_', '', project_name)
+                # 构建最小化状态
+                state = {
+                    "inferred": {"project_name": project_name},
+                    "assets": {},
+                    "meta": {"source_file": str(content_md_path)},
+                    "template_info": None,
+                    "narrative_outline": parsed.get("pages", []),
+                    "constraints": {}
+                }
+                with open(state_file, 'w', encoding='utf-8') as f:
+                    json.dump(state, f, ensure_ascii=False, indent=2)
+                print(f"✅ 状态文件已创建，继续执行...")
+            else:
+                print(f"❌ 错误: 找不到内容状态文件，也无法从 content_plan.md 解析。")
+                return None
+        else:
+            print(f"❌ 错误: 找不到内容状态文件 {state_file}。请先运行 plan-content。")
+            return None
 
     with open(state_file, 'r', encoding='utf-8') as f:
         state = json.load(f)
@@ -282,7 +372,7 @@ def generate_visual_plan(plan_dir: str, style_preference: str = None):
     narrative_outline = state.get("narrative_outline", [])
     constraints = state.get("constraints", {})
 
-    # 尝试从用户可能编辑过的 content_plan.md 读取最新大纲
+    # 尝试从用户可能编辑过的 content_plan.md 读取最新大纲（覆盖 state 中的旧数据）
     content_md_path = project_dir / "content_plan.md"
     if content_md_path.exists():
         with open(content_md_path, 'r', encoding='utf-8') as f:
@@ -379,15 +469,34 @@ def generate_visual_plan(plan_dir: str, style_preference: str = None):
     print(f"{'='*60}")
 
     print(f"\n{'='*60}")
-    print(f"⛔ STOP — 请勿继续执行 execute！")
-    print(f"   必须先让用户审阅 {REVIEW_MD_FILENAME} 中的：")
-    print(f"   ① 视觉主张和配色方案")
+    print(f"⛔ STOP — 请审阅 {REVIEW_MD_FILENAME} 后再继续！")
+    print(f"   必须先让用户审阅：")
+    print(f"   ① 视觉主张和配色方案（Design Manifesto）")
     print(f"   ② 每页的配图/画面描述（VisualDirector 已生成，可直接审阅或修改）")
     print(f"{'='*60}")
-    print(f"   确认后运行: python main.py execute \"{project_dir}\"")
-    print(f"   或生成原型: python main.py prototype \"{project_dir}\"")
+
+    # 实际阻塞等待确认（非交互环境返回 "BLOCKED"）
+    result = _prompt_user("确认审阅完毕，要继续执行吗？")
+    if result == "BLOCKED":
+        print(f"""
+═══════════════════════════════════════════════════════
+⛔ GATE 2 — 已拦截，需人工确认
+═══════════════════════════════════════════════════════
+   master_plan.md 已生成（第 1 页有完整审阅说明）。
+
+   请将以下内容呈现给用户：
+   ① 确认已审阅 master_plan.md
+   ② 确认后可回答"继续"我来执行，或回答"preview 1-2"
+     我会用 prototype 先跑 1-2 页给您确认风格。
+═══════════════════════════════════════════════════════
+""")
+        return "BLOCKED"
+    elif not result:
+        print(f"\n⏸️  已停止。请审阅 {REVIEW_MD_FILENAME} 后再运行 execute。")
+        return None
 
     return str(review_md_path)
+
 
 def generate_plan(content_file: str, template_file: str = None,
                   logo_file: str = None, output_name: str = None, page_count: int = None,
@@ -423,7 +532,7 @@ def _resolve_execute_input(path_arg: str) -> tuple:
         from datetime import date
         date_prefix = date.today().strftime("%Y%m%d")
         dir_name = f"{date_prefix}_{name}"
-        project_dir = Path("output") / "ppt" / dir_name
+        project_dir = DEFAULT_OUTPUT_BASE / dir_name
         project_dir.mkdir(parents=True, exist_ok=True)
         return str(p), str(project_dir), True
     if p.suffix.lower() == ".json":
@@ -565,7 +674,7 @@ def _auto_select_prototype_seeds(plan_input: str) -> list:
     return seeds if seeds else [1, 2]
 
 
-def execute_from_plan(plan_input: str, output_name: str = None, resolution: str = "1K", slide_filter: list = None, reassemble_only: bool = False, regenerate: bool = False, no_blend: bool = False):
+def execute_from_plan(plan_input: str, output_name: str = None, resolution: str = "1K", slide_filter: list = None, reassemble_only: bool = False, regenerate: bool = False, no_blend: bool = False, force: bool = False):
     """
     Phase 2: 执行阶段。
     接受 REVIEW_MD_FILENAME 或 plan.json 路径，或包含它们的目录，进行最终的图文生成与组装。
@@ -581,6 +690,20 @@ def execute_from_plan(plan_input: str, output_name: str = None, resolution: str 
 
     plan_path, proj_dir, from_review = _resolve_execute_input(plan_input)
     if not plan_path:
+        return None
+
+    # GATE 2: 在非交互模式下，如果没有通过确认流程，则阻止直接执行
+    if from_review and not sys.stdin.isatty() and not force:
+        print("""
+⚠️  执行保护：检测到您直接运行 execute 命令（未经过审阅确认流程）。
+
+   master_plan.md 已生成，请确认：
+   ① 内容是否已审阅？
+   ② 是否需要用 prototype 预览 1-2 页后再全量生成？
+
+   如需强制执行，请加 --force 参数：
+   python main.py execute \"{proj_dir}\" --force
+""".format(proj_dir=proj_dir))
         return None
 
     plan_json_path = Path(proj_dir) / "plan.json"
@@ -652,7 +775,7 @@ def execute_from_plan(plan_input: str, output_name: str = None, resolution: str 
         from datetime import date
         date_prefix = date.today().strftime("%Y%m%d")
         dir_name = f"{date_prefix}_{name}"
-        project_dir = str(Path("output") / "ppt" / dir_name)
+        project_dir = str(DEFAULT_OUTPUT_BASE / dir_name)
     
     template_path = meta.get("template_file")
 
@@ -688,10 +811,14 @@ def _parse_slides_arg(s: str) -> list:
     return [int(n) for n in nums] if nums else None
 
 
-def _prompt_user(message: str, default_yes: bool = True) -> bool:
+def _prompt_user(message: str, default_yes: bool = True) -> bool | str:
     """
-    向用户提示确认。在非交互终端（如 Cursor Shell）下返回 False 以安全停止。
+    向用户提示确认。在非交互终端（AI Agent / Claude Code）下返回 "BLOCKED"。
     """
+    # 非交互环境：返回特殊值，让上游知道是被拦截而非用户拒绝
+    if not sys.stdin.isatty():
+        print(f"\n[非交互模式: {message} — 已拦截，需用户介入]")
+        return "BLOCKED"
     hint = "(Y/n)" if default_yes else "(y/N)"
     try:
         answer = input(f"\n{message} {hint}: ").strip().lower()
@@ -860,7 +987,7 @@ Nano Banana 2 PPT Generator
 
   # Phase 2: 执行计划（生图 + 组装 PPTX）
   # 可传入项目目录、master_plan.md 或 plan.json
-  python -m tools.nano_banana_ppt.main execute <项目目录或plan文件> [output_name] [--resolution 1K|2K|4K] [--slides 3 5 7] [--reassemble]
+  python -m tools.nano_banana_ppt.main execute <项目目录或plan文件> [output_name] [--resolution 1K|2K|4K] [--slides 3 5 7] [--reassemble] [--force]
 
   # Upscale: 后置高保真放大 (1K -> 2K/4K)
   python -m tools.nano_banana_ppt.main upscale <项目目录> [--resolution 2K|4K] [--slides 3 5 7]
@@ -877,12 +1004,13 @@ Nano Banana 2 PPT Generator
   --reassemble  仅从已有 slides 重新组装 PPTX，不生成新图（用于修复布局问题）
   --regenerate  强制重新从 master_plan.md 派生 plan.json（覆盖已有缓存）
   --no-blend    跳过原生图片的 Blend Pass（打样阶段加速用，不影响最终质量）
+  --force       跳过执行保护确认（在非交互模式下绕过 GATE 2 警告）
 
 交互:
   执行完成后（交互式终端），可输入页号（如 3 5 7）重跑部分页面，直接回车跳过。
 
 目录结构:
-  output/ppt/{date}_{name}/
+  ~/Desktop/AI output/ppt/{date}_{name}/
     {date}_{name}.pptx               ← 最终交付的 PPTX
     content_plan.md                  ← 内容草稿（Phase 1.1 生成）
     master_plan.md                   ← 制作蓝图（Phase 1.5 生成，含内容+视觉）
@@ -893,7 +1021,7 @@ Nano Banana 2 PPT Generator
 
 
 def _parse_cli_args(args):
-    """解析 CLI 参数，提取 --resolution、--slides、--pages、--style、--briefing、--reassemble、--content-only、--regenerate、--no-blend"""
+    """解析 CLI 参数，提取 --resolution、--slides、--pages、--style、--briefing、--reassemble、--content-only、--regenerate、--no-blend、--force"""
     rest = []
     resolution = "1K"  # 默认值为 1K
     slides = None
@@ -904,6 +1032,7 @@ def _parse_cli_args(args):
     content_only = False
     regenerate = False
     no_blend = False
+    force = False
     i = 0
     while i < len(args):
         a = args[i]
@@ -933,6 +1062,9 @@ def _parse_cli_args(args):
         elif a == "--no-blend":
             no_blend = True
             i += 1
+        elif a == "--force":
+            force = True
+            i += 1
         elif a == "--slides":
             i += 1
             nums = []
@@ -949,7 +1081,7 @@ def _parse_cli_args(args):
         else:
             rest.append(a)
             i += 1
-    return rest, resolution, slides, pages, style, briefing, reassemble, content_only, regenerate, no_blend
+    return rest, resolution, slides, pages, style, briefing, reassemble, content_only, regenerate, no_blend, force
 
 
 if __name__ == "__main__":
@@ -957,7 +1089,7 @@ if __name__ == "__main__":
         print_usage()
         sys.exit(1)
 
-    rest, resolution, slides, pages, style, briefing, reassemble, content_only, regenerate, no_blend = _parse_cli_args(sys.argv[1:])
+    rest, resolution, slides, pages, style, briefing, reassemble, content_only, regenerate, no_blend, force = _parse_cli_args(sys.argv[1:])
     command = rest[0].lower() if rest else ""
 
     if command == "plan" or command == "plan-content":
@@ -978,7 +1110,10 @@ if __name__ == "__main__":
             print("❌ 缺少 项目目录 参数")
             sys.exit(1)
         proj_dir = rest[1]
-        generate_visual_plan(proj_dir, style_preference=style)
+        result = generate_visual_plan(proj_dir, style_preference=style)
+        if result == "BLOCKED":
+            # 已拦截，Agent 应停止并向用户呈现 plan 等待确认
+            sys.exit(0)  # 干净退出，不抛异常
 
     elif command == "execute":
         if len(rest) < 2:
@@ -986,7 +1121,7 @@ if __name__ == "__main__":
             sys.exit(1)
         pf = rest[1]
         on = rest[2] if len(rest) > 2 else None
-        result = execute_from_plan(pf, on, resolution=resolution, slide_filter=slides, reassemble_only=reassemble, regenerate=regenerate, no_blend=no_blend)
+        result = execute_from_plan(pf, on, resolution=resolution, slide_filter=slides, reassemble_only=reassemble, regenerate=regenerate, no_blend=no_blend, force=force)
         if result:
             _, proj_dir = result if isinstance(result, tuple) else (None, None)
             _interactive_rerun_prompt(pf, on or Path(pf).parent.name, resolution or "1K", project_dir=proj_dir)
@@ -999,7 +1134,7 @@ if __name__ == "__main__":
         
         # 验证输入确实是个目录
         if not os.path.isdir(proj_dir):
-            print(f"❌ {proj_dir} 不是一个有效的目录。upscale 需要传入包含图片的 output/ppt/项目目录。")
+            print(f"❌ {proj_dir} 不是一个有效的目录。upscale 需要传入包含图片的 ~/Desktop/AI output/ppt/项目目录。")
             sys.exit(1)
             
         # 默认为 4K 放大
