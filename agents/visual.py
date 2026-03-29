@@ -535,8 +535,14 @@ Ensure the palette has high contrast for text reading.
             system_prompt = (
                 "You are an expert Prompt Engineer for Nano Banana 2 (Gemini Image). "
                 "Your top priority is maintaining strict visual and typographic consistency across all generated slides. "
-                "OUTPUT FORMAT: You must output EXACTLY one plain-text string. "
-                "DO NOT use any markup symbols: no asterisks, no hashes, no backticks, no bullet markers, no bold, no italic, no code blocks."
+                "\n\nCRITICAL OUTPUT REQUIREMENTS:\n"
+                "Your output MUST include TWO mandatory sections:\n"
+                "1. TEXT TO RENDER section - List ALL text elements that must appear in the image, EXACTLY as provided in the user's TEXT CONTENT section. Do NOT omit, summarize, or paraphrase any text.\n"
+                "2. VISUAL SCENE section - Describe the visual composition, layout, colors, textures, lighting, and styling.\n"
+                "\n"
+                "OUTPUT FORMAT: You must output EXACTLY one plain-text string with clear section markers. "
+                "Use simple section headers like '【TEXT TO RENDER】' and '【VISUAL SCENE】' to separate the sections. "
+                "DO NOT use markdown formatting: no asterisks, no hashes, no backticks, no bullet markers, no bold, no italic, no code blocks."
             )
 
             if template_info:
@@ -588,6 +594,13 @@ Ensure the palette has high contrast for text reading.
                 # Minimal mode: simplified prompt structure
                 user_prompt = f"""Generate an image generation prompt for a PPT slide.
 
+【MANDATORY TEXT CONTENT — MUST RENDER EXACTLY】
+The following text MUST appear in the generated image. Do NOT omit, summarize, or paraphrase.
+Include this section in your output as '【TEXT TO RENDER】' with all text listed below:
+
+{render_text_block}
+
+【VISUAL SCENE DESCRIPTION】
 {design_system}
 
 {prompt_mode}
@@ -598,16 +611,29 @@ Ensure the palette has high contrast for text reading.
 - User-Confirmed Visual: {visual_suggestion if visual_suggestion.strip() else "(empty — generate matching visual)"}
 - Layout: {layout_name}
 
-{render_text_block}
-
 {neg_constraints}
 
-【Output】
-CRITICAL: Output ONLY the raw image-generation prompt text. No markdown formatting (no bold, no italic, no bullet markers, no headings, no code blocks). Pure plain text only."""
+【Output Format】
+Your output MUST follow this structure:
+
+【TEXT TO RENDER】
+(List ALL text elements from the MANDATORY TEXT CONTENT section above, exactly as provided)
+
+【VISUAL SCENE】
+(Describe the visual composition, colors, textures, lighting, and styling that will bring the User-Confirmed Visual to life)
+
+CRITICAL: Output as plain text with section markers. No markdown formatting."""
             else:
                 # Verbose mode: detailed prompt structure
                 user_prompt = f"""Generate a high-fidelity image generation prompt for a PPT slide.
 
+【MANDATORY TEXT CONTENT — MUST RENDER EXACTLY】
+The following text MUST appear in the generated image. Do NOT omit, summarize, or paraphrase.
+Include this section in your output as '【TEXT TO RENDER】' with all text listed below:
+
+{render_text_block}
+
+【VISUAL SCENE DESCRIPTION】
 {design_system}
 
 {prompt_mode}
@@ -623,10 +649,12 @@ CRITICAL: Output ONLY the raw image-generation prompt text. No markdown formatti
 - User-Confirmed Visual Description: {visual_suggestion}
 
 【VISUAL DESCRIPTION CONSTRAINT (CRITICAL — NON-NEGOTIABLE)】
-The "User-Confirmed Visual Description" above is the EXACT visual the user has approved for this slide. You MUST follow it precisely. DO NOT deviate, interpret, or "improve" this description — the user has already made the creative decision. Your job is to:
-1. Apply the Global Style (colors, fonts, lighting, texture) to render this exact scene
-2. Adapt the layout/placement only to fit the text content
-3. NEVER substitute a different visual metaphor unless the confirmed description is physically impossible (e.g., describes a non-existent scene)
+The "User-Confirmed Visual Description" above is the EXACT visual the user has approved for this slide. You MUST follow it precisely and preserve ALL key details. Your job is to:
+1. Preserve EVERY specific detail mentioned in the Visual Description (objects, actions, textures, compositions, emotional cues)
+2. Apply the Global Style (colors, fonts, lighting, texture) to render this exact scene
+3. Adapt the layout/placement only to fit the text content
+4. NEVER substitute a different visual metaphor or generalize specific details into vague descriptions
+5. If the Visual Description mentions specific text to be handwritten or displayed (e.g., "便签上用铅笔手写'胃肠溃疡哪家医院更好？'"), you MUST include that exact text in your TEXT TO RENDER section
 {vb_empty_warning if not visual_suggestion.strip() else ""}
 
 【VISUAL DIVERSITY RULE (CRITICAL)】
@@ -638,15 +666,21 @@ The "User-Confirmed Visual Description" above is the EXACT visual the user has a
 
 【Instruction】
 1. {type_instruction}
-2. Describe the visual scene in detail.
+2. Describe the visual scene in detail, preserving ALL specific elements from the User-Confirmed Visual Description.
 3. Plan text placement organically based on the meaning of the content.
-
-{render_text_block}
 
 {neg_constraints}
 
-【Output】
-CRITICAL: Output ONLY the raw image-generation prompt text. No markdown formatting (no bold, no italic, no bullet markers, no headings, no code blocks). Pure plain text only."""
+【Output Format】
+Your output MUST follow this structure:
+
+【TEXT TO RENDER】
+(List ALL text elements from the MANDATORY TEXT CONTENT section above, exactly as provided. Also include any text mentioned in the Visual Description that should be handwritten or displayed in the scene.)
+
+【VISUAL SCENE】
+(Describe the complete visual composition: layout, objects, actions, colors, textures, lighting, mood. Preserve ALL specific details from the User-Confirmed Visual Description. Do NOT generalize or simplify.)
+
+CRITICAL: Output as plain text with section markers. No markdown formatting (no bold, no italic, no bullet markers, no headings, no code blocks)."""
 
             tasks.append({
                 'skip_llm': False,
@@ -697,6 +731,52 @@ CRITICAL: Output ONLY the raw image-generation prompt text. No markdown formatti
                 # 清理多余空行
                 cleaned_prompt = re.sub(r'\n{3,}', '\n\n', cleaned_prompt)
                 final_prompt = cleaned_prompt.strip()
+
+                # 验证输出格式：检查是否包含必要的 TEXT TO RENDER 部分
+                text_content = page.get('text_content', {})
+                headline = text_content.get('headline', '')
+                body = text_content.get('body', [])
+
+                # 检查标题是否在输出中
+                missing_text = []
+                if headline and headline not in final_prompt:
+                    missing_text.append(f'Headline: "{headline}"')
+
+                # 检查正文关键内容是否在输出中
+                for item in body[:2]:  # 只检查前2条，避免过度严格
+                    item_clean = item.lstrip('-•* ').strip()
+                    if item_clean and len(item_clean) > 10 and item_clean not in final_prompt:
+                        # 只检查较长的内容项，避免误报
+                        missing_text.append(f'Body: "{item_clean[:50]}..."')
+
+                # 如果缺失关键文字内容，进行补充
+                if missing_text:
+                    logger.warning(f"⚠️ P{page.get('page_num')} 输出缺失文字内容，正在补充...")
+
+                    # 构建补充的 TEXT TO RENDER 部分
+                    text_to_render = "\n\n【TEXT TO RENDER】\n"
+                    if headline:
+                        text_to_render += f'Headline: "{headline}"\n'
+                    if text_content.get('subhead'):
+                        text_to_render += f'Subtitle: "{text_content["subhead"]}"\n'
+                    if body:
+                        text_to_render += "Body:\n"
+                        for i, item in enumerate(body):
+                            item_clean = item.lstrip('-•* ').strip()
+                            text_to_render += f'  {i+1}. "{item_clean}"\n'
+
+                    # 如果输出中已经有 TEXT TO RENDER 标记，替换它；否则在开头添加
+                    if '【TEXT TO RENDER】' in final_prompt or 'TEXT TO RENDER' in final_prompt:
+                        # 替换现有的 TEXT TO RENDER 部分
+                        final_prompt = re.sub(
+                            r'【?TEXT TO RENDER】?.*?(?=【|$)',
+                            text_to_render,
+                            final_prompt,
+                            flags=re.DOTALL
+                        )
+                    else:
+                        # 在开头添加 TEXT TO RENDER 部分
+                        final_prompt = text_to_render + "\n" + final_prompt
                 plan_item = page.copy()
                 plan_item['visual_prompt'] = final_prompt
                 plan_item['reference_image'] = task['reference_image_path']
@@ -772,10 +852,15 @@ CRITICAL: Output ONLY the raw image-generation prompt text. No markdown formatti
                         ],
                         temperature=0.4
                     )
+                    # 清理 MiniMax 模型返回的 <think> 思考过程标签
+                    raw_prompt = resp.choices[0].message.content.strip()
+                    clean_prompt = re.sub(r'<think>.*?</think>', '', raw_prompt,
+                                          flags=re.DOTALL | re.IGNORECASE).strip()
+
                     return {
                         "type": tpl_type,
                         "title": title,
-                        "visual_prompt": resp.choices[0].message.content.strip(),
+                        "visual_prompt": clean_prompt,
                         "reference_image": None,
                         "style_config": style_config,
                         "layout": layout
