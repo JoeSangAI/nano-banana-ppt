@@ -146,14 +146,34 @@ def generate_design_manifesto(
             response_format={"type": "json_object"}
         )
         content = resp.choices[0].message.content.strip()
+
+        # 记录原始返回内容用于调试
+        logger.info(f"Design Manifesto raw response (first 200 chars): {content[:200]}")
+
+        # 如果返回内容为空，抛出异常触发重试
+        if not content:
+            raise ValueError("LLM returned empty response")
+
+        # 清理 markdown 代码块标记
         if content.startswith("```json"):
             content = content[7:]
         elif content.startswith("```"):
             content = content[3:]
         if content.endswith("```"):
             content = content[:-3]
-        
-        result = json.loads(content.strip())
+
+        content = content.strip()
+
+        # 再次检查清理后的内容是否为空
+        if not content:
+            raise ValueError("Content is empty after cleaning markdown blocks")
+
+        result = json.loads(content)
+
+        # 验证必需字段
+        if not result.get("chinese_proposal"):
+            raise ValueError("Missing chinese_proposal in response")
+
         return {
             "chinese_proposal": result.get("chinese_proposal", "现代极简专业风格。我们使用干净的线条和微妙的渐变，结合大面积留白，为您的内容提供一个高级、清晰的展示空间。"),
             "english_cliche_bans": result.get("english_cliche_bans", "No glowing brains, no handshakes, no generic 3D funnels, no floating data."),
@@ -161,6 +181,9 @@ def generate_design_manifesto(
         }
     except Exception as e:
         logger.error(f"Failed to generate Design Manifesto: {e}")
+        logger.error(f"Response content: {content if 'content' in locals() else 'N/A'}")
+
+        # 返回默认值，但记录详细错误信息
         return {
             "chinese_proposal": "现代极简专业风格。我们使用干净的线条和微妙的渐变，结合大面积留白，为您的内容提供一个高级、清晰的展示空间。",
             "english_cliche_bans": "No glowing brains, no handshakes, no generic 3D funnels, no floating data.",
