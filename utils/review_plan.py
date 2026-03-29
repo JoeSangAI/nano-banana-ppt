@@ -164,9 +164,15 @@ def generate_design_manifesto(
 
         content = content.strip()
 
+        # 移除 <think> 标签（如果存在）
+        import re
+        # 移除 <think>...</think> 标签及其内容
+        content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
+        content = content.strip()
+
         # 再次检查清理后的内容是否为空
         if not content:
-            raise ValueError("Content is empty after cleaning markdown blocks")
+            raise ValueError("Content is empty after cleaning markdown blocks and think tags")
 
         result = json.loads(content)
 
