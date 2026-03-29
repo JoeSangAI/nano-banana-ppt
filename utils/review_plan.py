@@ -284,12 +284,43 @@ If a slide has "正文形态:illustration_with_text（图文并茂模式）":
 - Example for illustration_with_text: "画面中央是一本打开的手工绘本，左页用棕色彩笔写着标题'2025年4月11日，深夜'，右页用铅笔画着深夜场景，一个女孩坐在床边，手里拿着手机，屏幕发出微光"
 - BAD for illustration_with_text: "画面是一个深夜场景" (missing the actual text content)
 
+【STYLE ANCHORING — 风格锚定 (CRITICAL)】
+
+P1 is the STYLE BENCHMARK for the ENTIRE presentation. ALL subsequent slides (P2, P3, P4, ...) MUST:
+- Use EXACTLY the same artistic technique as P1 (e.g., if P1 uses pencil sketch style, ALL pages must use pencil sketch)
+- Use EXACTLY the same color palette approach as P1
+- Use EXACTLY the same paper texture and rendering style as P1
+- Use EXACTLY the same line weight and shading style as P1
+- NEVER switch to a different artistic technique (e.g., don't mix watercolor with pencil sketch)
+
+For illustration_with_text slides: The illustration style (人物造型、场景渲染) MUST be consistent with P1's style, while the text elements appear naturally on objects in the scene.
+
+【STORY GROUPING — 故事分组感知 (CRITICAL)】
+
+When multiple consecutive slides belong to the SAME STORY, they MUST maintain PERFECT visual consistency:
+- Same perspective and viewpoint
+- Same lighting direction and quality
+- Same color tone and mood
+- Same level of detail and realism
+- Connected scenes should feel like panels from the same comic or pages from the same book
+
+Example of CORRECT behavior:
+- P2-P5 are all about "父亲's story" → ALL must use identical style, perspective, and technique
+- P6-P8 are all about "母亲's story" → ALL must use identical style, perspective, and technique
+
+Example of WRONG behavior:
+- P2 uses detailed illustration with warm tones, but P3 suddenly switches to minimalist line art with cool tones (SAME STORY, WRONG)
+
 SPECIFIC EXAMPLES OF CORRECT BEHAVIOR:
 - GOOD: "画面中央是一个天平，左边放着标注'5.5万亿（占电商30%）'的金色立方体，右边是标注'6000亿'的巨大红色圆环，天平向右侧倾斜"
 - BAD:   "画面中央是一个天平，对比左右两侧的数据差异"
 
 - GOOD: "四个数据卡片并排：'10.74亿（日活）'、'95%（渗透率）'、'18.3亿（抖音）'、'156分钟（时长）'"
 - BAD:   "四个数据卡片展示关键指标"
+
+【STYLE CONSISTENCY EXAMPLES】
+- GOOD for SAME STORY pages: P2描绘了"铅笔素描风格，深夜蓝色调，手机屏幕暖光"，P3也用"铅笔素描风格，深夜蓝色调，手机屏幕暖光"——完美一致
+- BAD for SAME STORY pages: P2是"铅笔素描风格"，P3突然变成"水彩渲染风格"——风格断裂，读者会感到困惑
 
 Output format (pure JSON, no markdown):
 {{
