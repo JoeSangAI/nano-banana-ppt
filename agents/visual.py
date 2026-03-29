@@ -677,6 +677,9 @@ CRITICAL: Output ONLY the raw image-generation prompt text. No markdown formatti
                 )
                 final_prompt = response.choices[0].message.content.strip()
 
+                # 清理 <think> 思考过程标签（MiniMax 模型特有）
+                final_prompt = re.sub(r'<think>.*?</think>', '', final_prompt, flags=re.DOTALL | re.IGNORECASE).strip()
+
                 # 输出验证：检查并清理禁止的格式标记
                 forbidden_patterns = [
                     (r'```', 'markdown code block'),
