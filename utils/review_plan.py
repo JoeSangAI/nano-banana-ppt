@@ -106,7 +106,7 @@ def generate_design_manifesto(
 {template_instruction}
 
 【Task】
-你需要生成一份针对这份 PPT 的“设计总监视觉设计提案”。
+你需要生成一份针对这份 PPT 的"设计总监视觉设计提案"。
 1. 你的提案应该用流畅自然、通俗易懂的**中文大白话**（2-3段话）来撰写，就像一位资深设计总监在向客户做提案，解释我们为什么选择这样的色彩策略、情绪氛围，以及整体的视觉方向（拒绝任何塑料感和廉价的AI常见套路）。
 2. 同时，针对生图大模型，你需要提供一段**纯英文的严格负向提示词（Negative Prompt / Cliche Bans）**，禁止生成那些陈词滥调（例如发光大脑、3D漏斗、赛博节点等）。
 3. 你还需要提供一份**视觉多样性方案（visual_diversity_strategy）**：为这份 PPT 规划 4-6 种不同类别的视觉主体（visual motifs），确保整份 PPT 在统一风格下有足够的视觉丰富性和变化感。
@@ -489,9 +489,9 @@ def build_review_md(
         f"| 模板 | {meta.get('template_file') or '无（AI 自动设计）'} |",
         f"| 配色 | {palette_str} |",
         f"| Logo | {meta.get('logo_file') or '未使用'} |",
-        f”| 字体 | {fonts_str} |”,
-        f”| 风格 | {style_desc[:80]}{'...' if len(style_desc) > 80 else ''} |”,
-        “”,
+        f"| 字体 | {fonts_str} |",
+        f"| 风格 | {style_desc[:80]}{'...' if len(style_desc) > 80 else ''} |",
+        "",
         "---",
         "",
         "## 二、视觉主张 (Design System Manifesto)",
