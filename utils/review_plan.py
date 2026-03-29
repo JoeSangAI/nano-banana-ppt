@@ -228,9 +228,13 @@ def generate_per_slide_visual_suggestions(
         body = tc.get("body", [])
         table_data = tc.get("table_data")
 
+        body_format = tc.get("body_format", "bullets")  # 提取正文形态字段
+
         ctx = f"P{pnum} [{ptype}] 标题:{headline}"
         if subhead:
             ctx += f" | 副标题:{subhead}"
+        if body_format == "illustration_with_text":
+            ctx += f" | 正文形态:illustration_with_text（图文并茂模式，文字必须出现在画面中）"
         if body:
             ctx += f" | 正文:{'; '.join(str(b) for b in body[:3])}"
         if table_data:
@@ -270,6 +274,15 @@ For EVERY slide:
 - Write 2-4 sentences of concrete Chinese visual description
 - Describe EXACT objects, lighting, composition, visual metaphors
 - For DATA slides: You MUST include ALL numbers from the table in your description. Do NOT summarize or omit any row.
+
+【ILLUSTRATION WITH TEXT MODE — 图文并茂模式】
+
+If a slide has "正文形态:illustration_with_text（图文并茂模式）":
+- The visual description MUST include the actual text content (标题、副标题、正文) as visible elements in the image
+- The text should appear as if handwritten, typed, or displayed on objects in the scene (e.g., on paper, screens, signs, notebooks)
+- This creates a "comic book" or "illustrated storybook" effect where the image and text complement each other
+- Example for illustration_with_text: "画面中央是一本打开的手工绘本，左页用棕色彩笔写着标题'2025年4月11日，深夜'，右页用铅笔画着深夜场景，一个女孩坐在床边，手里拿着手机，屏幕发出微光"
+- BAD for illustration_with_text: "画面是一个深夜场景" (missing the actual text content)
 
 SPECIFIC EXAMPLES OF CORRECT BEHAVIOR:
 - GOOD: "画面中央是一个天平，左边放着标注'5.5万亿（占电商30%）'的金色立方体，右边是标注'6000亿'的巨大红色圆环，天平向右侧倾斜"
