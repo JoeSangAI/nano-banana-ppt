@@ -333,27 +333,59 @@ Output format (pure JSON, no markdown):
 
 JSON only, no explanation:"""
 
-    try:
-        response = chat_completion_with_fallback(
-            client,
-            model="MiniMax-M2.7",
-            model_fallback=["MiniMax-M2.7"],  # 统一使用 MiniMax M2.7
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=0.3  # 降低温度以提高稳定性
-        )
-        import json, re
-        content = response.choices[0].message.content.strip()
-        # Extract JSON
-        json_match = re.search(r'\{[\s\S]+\}', content)
-        if json_match:
-            data = json.loads(json_match.group())
-            slides_data = data.get("slides", {})
-            return {int(k): v for k, v in slides_data.items()}
-    except Exception as e:
-        logger.error(f"Failed to generate per-slide visual suggestions: {e}")
+    import json, re
+
+    max_retries = 3
+    retry_delay = 2
+
+    for attempt in range(max_retries):
+        try:
+            response = chat_completion_with_fallback(
+                client,
+                model="MiniMax-M2.7",
+                model_fallback=["MiniMax-M2.7"],  # 统一使用 MiniMax M2.7
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.3  # 降低温度以提高稳定性
+            )
+            content = response.choices[0].message.content.strip()
+
+            # 移除 <think> 标签
+            content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
+            content = content.strip()
+
+            if not content:
+                raise ValueError("Empty response after removing think tags")
+
+            # Extract JSON
+            json_match = re.search(r'\{[\s\S]+\}', content)
+            if json_match:
+                data = json.loads(json_match.group())
+                slides_data = data.get("slides", {})
+                if slides_data:
+                    return {int(k): v for k, v in slides_data.items()}
+
+            # If we got here, we have content but no valid slides
+            logger.warning(f"Attempt {attempt + 1}: Response received but no slides found in JSON")
+            if attempt < max_retries - 1:
+                logger.info(f"Retrying in {retry_delay} seconds...")
+                import time
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+                continue
+
+        except Exception as e:
+            logger.error(f"Attempt {attempt + 1}/{max_retries} failed: {e}")
+            if attempt < max_retries - 1:
+                logger.info(f"Retrying in {retry_delay} seconds...")
+                import time
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+                continue
+
+    logger.error("All retry attempts failed for generate_per_slide_visual_suggestions")
     return {}
 
 
