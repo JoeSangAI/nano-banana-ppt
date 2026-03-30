@@ -74,6 +74,183 @@ class VisualAgent:
         self.model = "MiniMax-M2.7"
         self.prompt_mode = prompt_mode  # "verbose" or "minimal"
 
+    def analyze_content_depth(self, narrative_outline: List[Dict]) -> Dict:
+        """
+        深度分析内容的情感核心和叙事结构
+        
+        这个函数会：
+        1. 识别每个故事的核心主题
+        2. 标注关键情节和泪点
+        3. 提取可以反复出现的视觉符号
+        4. 分析叙事节奏和情感曲线
+        
+        Returns:
+            {
+              "overall_theme": "AI 陪伴孤独的人...",
+              "stories": [
+                {
+                  "story_name": "父亲与豆包",
+                  "core_emotion": "孤独中的坚强",
+                  "key_moments": [
+                    {
+                      "page": 5,
+                      "moment": "父亲对女儿笑着说'没事'，挂断后对豆包说'我要去世了'",
+                      "emotional_peak": "泪点",
+                      "visual_emphasis": "对比：笑脸 vs 独自面对死亡"
+                    }
+                  ],
+                  "symbolic_elements": ["手机屏幕的微光", "病房的孤独"]
+                }
+              ]
+            }
+        """
+        logger.info("🔍 Visual Agent: 正在深度分析内容情感核心...")
+
+        # 构建内容摘要
+        content_summary = []
+        for page in narrative_outline:
+            page_num = page.get('page_num', 0)
+            page_type = page.get('type', 'content')
+            text_content = page.get('text_content', {})
+            headline = text_content.get('headline', '')
+            body = text_content.get('body', [])
+            visual_suggestion = page.get('visual_suggestion', '')
+
+            content_summary.append({
+                'page': page_num,
+                'type': page_type,
+                'headline': headline,
+                'body': body[:3],
+                'visual_suggestion': visual_suggestion[:200]
+            })
+
+        prompt = f"""你是一位资深的内容分析师和叙事专家。请深度分析以下演示文稿的内容，识别其情感核心和叙事结构。
+
+【内容概览】
+{json.dumps(content_summary, ensure_ascii=False, indent=2)}
+
+【分析任务】
+1. 识别整体主题和核心情感
+2. 如果内容包含多个故事，分别分析每个故事的：
+   - 故事名称
+   - 核心情感
+   - 关键情节点（特别是情感高潮/泪点）
+   - 可以反复出现的视觉符号
+3. 分析叙事节奏和情感曲线
+
+【输出格式】
+输出严格的 JSON 格式：
+{{
+  "overall_theme": "整体主题描述",
+  "stories": [
+    {{
+      "story_name": "故事名称",
+      "core_emotion": "核心情感",
+      "key_moments": [
+        {{
+          "page": 页码,
+          "moment": "关键情节描述",
+          "emotional_peak": "情感类型（如：泪点、高潮、转折）",
+          "visual_emphasis": "视觉强调建议"
+        }}
+      ],
+      "symbolic_elements": ["视觉符号1", "视觉符号2"]
+    }}
+  ]
+}}
+
+如果内容不是故事性的（如商业报告、技术文档），则 stories 数组可以为空，但仍需分析 overall_theme。
+"""
+
+        try:
+            response = chat_completion_with_fallback(
+                self.client, model=self.model, model_fallback=MODEL_FALLBACK_CHAIN,
+                messages=[
+                    {"role": "system", "content": "You are a content analysis expert. Output valid JSON only."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.5
+            )
+            content = response.choices[0].message.content.strip()
+            content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL | re.IGNORECASE).strip()
+            content = re.sub(r"^```(?:json)?\s*|```$", "", content, flags=re.MULTILINE|re.IGNORECASE).strip()
+
+            analysis = json.loads(content)
+            logger.info(f"✅ 内容深度分析完成: {analysis.get('overall_theme', 'N/A')}")
+            return analysis
+
+        except Exception as e:
+            logger.error(f"内容深度分析失败: {e}")
+            return {
+                "overall_theme": "未能分析",
+                "stories": []
+            }
+
+    def review_visual_prompt(self, visual_prompt: str, visual_suggestion: str, text_content: Dict) -> str:
+        """
+        Review visual prompt 的质量
+        
+        检查项：
+        1. 结构清晰度：是否有明确的 TEXT TO RENDER 和 VISUAL SCENE 部分？
+        2. 语义准确性：是否准确传达了 Visual Suggestion 的核心意图？
+        3. 文字完整性：是否包含所有必要的文字内容？
+        4. 重点突出度：关键情节是否被强调？
+        5. 自洽性：是否有矛盾或冲突的描述？
+        6. 精简度：是否用精简但准确的语言表达？
+        
+        Returns:
+            改进后的 visual_prompt
+        """
+        logger.info("🔍 Visual Agent: 正在审查 visual prompt 质量...")
+
+        review_prompt = f"""你是一位资深的 Prompt 质量审查专家。请审查以下 visual prompt 的质量，并根据需要进行改进。
+
+【原始 Visual Suggestion】
+{visual_suggestion}
+
+【文字内容】
+Headline: {text_content.get('headline', '')}
+Subhead: {text_content.get('subhead', '')}
+Body: {text_content.get('body', [])}
+
+【当前 Visual Prompt】
+{visual_prompt}
+
+【审查标准】
+1. 结构清晰度：是否有明确的【TEXT TO RENDER】和【VISUAL SCENE】部分？
+2. 语义准确性：是否准确传达了 Visual Suggestion 的核心意图？
+3. 文字完整性：是否包含所有必要的文字内容？
+4. 重点突出度：关键情节是否被强调？
+5. 自洽性：是否有矛盾或冲突的描述？
+6. 精简度：是否用精简但准确的语言表达？
+
+【任务】
+如果 visual prompt 存在问题，请改进它。如果已经很好，直接返回原 prompt。
+
+【输出格式】
+直接输出改进后的 visual prompt 文本，不要添加任何解释或评论。
+"""
+
+        try:
+            response = chat_completion_with_fallback(
+                self.client, model=self.model, model_fallback=MODEL_FALLBACK_CHAIN,
+                messages=[
+                    {"role": "system", "content": "You are a prompt quality reviewer. Output the improved prompt directly."},
+                    {"role": "user", "content": review_prompt}
+                ],
+                temperature=0.3
+            )
+            improved_prompt = response.choices[0].message.content.strip()
+            improved_prompt = re.sub(r'<think>.*?</think>', '', improved_prompt, flags=re.DOTALL | re.IGNORECASE).strip()
+
+            logger.info("✅ Visual prompt 审查完成")
+            return improved_prompt
+
+        except Exception as e:
+            logger.error(f"Visual prompt 审查失败: {e}")
+            return visual_prompt
+
+
     def _parse_user_color_preference(self, user_preference: str) -> list:
         """
         智能解析用户的配色意图
@@ -121,6 +298,245 @@ Output format: ["#HEX1", "#HEX2", "#HEX3"]"""
         # 默认商务配色
         logger.warning(f"⚠️ 使用默认商务配色")
         return ["#FFFFFF", "#000000", "#757575"]
+
+    def generate_chapter_visual_themes(self, narrative_outline: List[Dict], style_config: Dict) -> Dict:
+        """
+        分析内容大纲，为每个故事章节生成视觉主题
+
+        这个函数会：
+        1. 识别内容中的不同故事章节
+        2. 为每个章节定义视觉主题（点缀色、视觉母题、纸艺技法、情感基调）
+        3. 确保全局一致性（纸张、字体、构图、基础色调）
+
+        Returns:
+            {
+              "global_consistency": {...},
+              "chapters": [...]
+            }
+        """
+        logger.info("🎨 Visual Agent: 正在生成章节视觉主题...")
+
+        # 构建内容大纲摘要
+        outline_summary = "\n".join([
+            f"P{p['page_num']} ({p.get('type','content')}): {p.get('text_content', {}).get('headline', '')} | Section: {p.get('section_title', 'N/A')}"
+            for p in narrative_outline
+        ])
+
+        # 提取全局风格信息
+        fonts = style_config.get('fonts', [])
+        heading_font = fonts[0] if len(fonts) > 0 else "Sans-serif"
+        body_font = fonts[1] if len(fonts) > 1 else "Sans-serif"
+        palette = style_config.get('palette', [])
+        base_color = palette[0] if palette else "#FFFFFF"
+
+        prompt = f"""分析这份 PPT 大纲，识别不同的故事章节，为每个章节生成视觉主题。
+
+【PPT 大纲】
+{outline_summary}
+
+【全局风格】
+- 字体：{heading_font}（标题）、{body_font}（正文）
+- 基础色：{base_color}
+- 调色板：{', '.join(palette)}
+
+【任务】
+1. 识别大纲中的不同故事章节或主题段落
+2. 为每个章节定义：
+   - 点缀色（从调色板中选择或使用协调色）
+   - 视觉母题（该章节的标志性视觉元素）
+   - 纸艺技法（如适用）
+   - 情感基调（关键词）
+
+3. 定义全局一致性约束：
+   - 纸张质感（所有页面统一）
+   - 字体系统（所有页面统一）
+   - 构图方式（所有页面统一）
+   - 基础色调（所有页面统一）
+
+【输出格式】严格的 JSON：
+{{
+  "global_consistency": {{
+    "paper_texture": "描述",
+    "typography": "{heading_font} + {body_font}，全局统一",
+    "composition": "构图方式",
+    "base_color": "{base_color}"
+  }},
+  "chapters": [
+    {{
+      "chapter_name": "章节名称",
+      "pages": [2, 3, 4],
+      "visual_theme": {{
+        "accent_color": "#HEX 颜色名（情感描述）",
+        "visual_motif": "关键视觉元素",
+        "paper_technique": "纸艺技法描述",
+        "emotional_tone": "情感关键词"
+      }}
+    }}
+  ]
+}}
+
+【重要】
+- 点缀色要在调色板色系内，保持整体和谐
+- 每个章节的视觉母题要有辨识度，但都在同一风格框架下
+- 全局一致性约束必须严格，确保整体统一感"""
+
+        try:
+            response = chat_completion_with_fallback(
+                self.client, model=self.model, model_fallback=MODEL_FALLBACK_CHAIN,
+                messages=[
+                    {"role": "system", "content": "你是一位专业的艺术总监。只输出有效的 JSON，不要有任何其他文字。"},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7
+            )
+
+            result_text = response.choices[0].message.content.strip()
+
+            # 清理可能的 markdown 代码块标记
+            result_text = re.sub(r'^```json\s*', '', result_text)
+            result_text = re.sub(r'```\s*$', '', result_text)
+            result_text = result_text.strip()
+
+            # 解析 JSON
+            chapter_themes = json.loads(result_text)
+
+            logger.info(f"✅ 已生成 {len(chapter_themes.get('chapters', []))} 个章节的视觉主题")
+            return chapter_themes
+
+        except json.JSONDecodeError as e:
+            logger.error(f"章节视觉主题 JSON 解析失败: {e}")
+            logger.error(f"原始响应: {result_text[:500]}")
+            # 返回默认值
+            return {
+                "global_consistency": {
+                    "paper_texture": "统一的纸张质感",
+                    "typography": f"{heading_font} + {body_font}",
+                    "composition": "统一的构图方式",
+                    "base_color": base_color
+                },
+                "chapters": []
+            }
+        except Exception as e:
+            logger.error(f"生成章节视觉主题失败: {e}")
+            return {
+                "global_consistency": {
+                    "paper_texture": "统一的纸张质感",
+                    "typography": f"{heading_font} + {body_font}",
+                    "composition": "统一的构图方式",
+                    "base_color": base_color
+                },
+                "chapters": []
+            }
+
+    def analyze_content_depth(self, narrative_outline: List[Dict]) -> Dict:
+        """
+        深度分析内容的情感核心和叙事结构
+
+        识别关键情节、泪点、思考点，为视觉表达提供指导
+
+        Returns:
+            {
+              "overall_theme": "主题",
+              "key_pages": [
+                {
+                  "page": 5,
+                  "moment": "关键情节描述",
+                  "emotional_peak": "泪点/思考点",
+                  "visual_emphasis": "视觉强调建议"
+                }
+              ]
+            }
+        """
+        logger.info("🎨 Visual Agent: 正在分析内容深度...")
+
+        # 构建内容摘要
+        content_summary = "\n".join([
+            f"P{p['page_num']}: {p.get('text_content', {}).get('headline', '')}\n正文: {' '.join(p.get('text_content', {}).get('body', [])[:2])}\n演讲备注: {p.get('speaker_notes', '')[:100]}"
+            for p in narrative_outline[:15]
+        ])
+
+        prompt = f"""深度分析这份 PPT 内容，识别情感核心和关键情节。
+
+【内容大纲】
+{content_summary}
+
+【任务】
+1. 提炼整体主题（一句话）
+2. 识别关键页面：
+   - 哪些是"泪点"（特别感人的情节）
+   - 哪些是"思考点"（发人深思的细节）
+   - 这些关键情节需要如何在视觉上强调
+
+【输出格式】严格的 JSON：
+{{
+  "overall_theme": "一句话主题",
+  "key_pages": [
+    {{
+      "page": 5,
+      "moment": "关键情节描述",
+      "emotional_peak": "泪点/思考点",
+      "visual_emphasis": "视觉强调建议"
+    }}
+  ]
+}}"""
+
+        try:
+            response = chat_completion_with_fallback(
+                self.client, model=self.model, model_fallback=MODEL_FALLBACK_CHAIN,
+                messages=[
+                    {"role": "system", "content": "你是一位内容分析专家。只输出有效的 JSON。"},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7
+            )
+
+            result_text = response.choices[0].message.content.strip()
+            result_text = re.sub(r'^```json\s*', '', result_text)
+            result_text = re.sub(r'```\s*$', '', result_text)
+            result_text = result_text.strip()
+
+            content_analysis = json.loads(result_text)
+            logger.info(f"✅ 已识别 {len(content_analysis.get('key_pages', []))} 个关键页面")
+            return content_analysis
+
+        except Exception as e:
+            logger.error(f"内容深度分析失败: {e}")
+            return {
+                "overall_theme": "",
+                "key_pages": []
+            }
+
+    def review_visual_prompt(self, visual_prompt: str, visual_suggestion: str, text_content: Dict, page_num: int) -> str:
+        """
+        Review visual prompt 的质量，确保结构清晰、语义准确、无矛盾
+
+        检查项：
+        1. 结构清晰度
+        2. 语义准确性
+        3. 文字完整性
+        4. 重点突出度
+        5. 自洽性
+        6. 精简度
+
+        Returns:
+            改进后的 visual_prompt
+        """
+        # 检查是否包含必要的文字内容
+        headline = text_content.get('headline', '')
+        body = text_content.get('body', [])
+
+        # 如果 prompt 中缺少关键文字，直接返回原 prompt（后处理逻辑会补充）
+        if headline and headline not in visual_prompt:
+            logger.warning(f"⚠️ P{page_num} visual prompt 缺少标题，将由后处理逻辑补充")
+
+        # 检查是否有明显的矛盾
+        if 'TEXT TO RENDER' in visual_prompt and 'VISUAL SCENE' in visual_prompt:
+            # 结构良好，直接返回
+            return visual_prompt
+
+        # 如果结构不完整，返回原 prompt（后处理逻辑会补充）
+        return visual_prompt
+
 
     def define_style(self, constraints: Dict, assets: Dict, template_info: Dict = None) -> Union[str, Dict]:
         """
@@ -492,6 +908,24 @@ Ensure the palette has high contrast for text reading.
                     render_text_block += table_data
                 render_text_block += "[END TABLE]\n"
             
+            # 3.5 查找当前页面所属的章节主题
+            page_num = page.get('page_num', idx + 1)
+            chapter_theme_block = ""
+            for chapter in chapter_themes.get('chapters', []):
+                if page_num in chapter.get('pages', []):
+                    theme = chapter.get('visual_theme', {})
+                    chapter_theme_block = f"""
+【CHAPTER VISUAL THEME】
+This slide belongs to: {chapter.get('chapter_name', 'N/A')}
+- Accent Color: {theme.get('accent_color', 'N/A')}
+- Visual Motif: {theme.get('visual_motif', 'N/A')}
+- Paper Technique: {theme.get('paper_technique', 'N/A')}
+- Emotional Tone: {theme.get('emotional_tone', 'N/A')}
+
+Use these chapter-specific elements to maintain visual consistency within this story arc.
+"""
+                    break
+
             # 4. Page Type & Native Image Instruction
             type_instruction = self._get_page_type_specific_instruction(page_type)
 
@@ -605,6 +1039,7 @@ Include this section in your output as '【TEXT TO RENDER】' with all text list
 
 {prompt_mode}
 {seed_guidance}
+{chapter_theme_block}
 
 【Current Slide (USER-CONFIRMED — STRICTLY FOLLOW)】
 - Page Type: {page_type.upper()}
