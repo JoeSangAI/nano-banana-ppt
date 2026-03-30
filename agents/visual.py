@@ -804,6 +804,22 @@ Ensure the palette has high contrast for text reading.
         if len(narrative_outline) > 10:
             outline_summary += "\n... (more slides)"
 
+        # ========== 新增：生成章节视觉主题和内容深度分析 ==========
+        # 1. 生成章节视觉主题（确保视觉一致性 + 章节辨识度）
+        chapter_themes = self.generate_chapter_visual_themes(narrative_outline, style_config)
+
+        # 2. 分析内容深度（识别关键情节和泪点）
+        content_analysis = self.analyze_content_depth(narrative_outline)
+
+        # 提取全局一致性约束
+        global_consistency = chapter_themes.get('global_consistency', {})
+        chapters = chapter_themes.get('chapters', [])
+        key_pages = {kp['page']: kp for kp in content_analysis.get('key_pages', [])}
+
+        logger.info(f"📋 章节主题: {len(chapters)} 个章节")
+        logger.info(f"📋 关键页面: {len(key_pages)} 个")
+        # ========================================================
+
         visual_plan = []
         prev_layout = None
         
