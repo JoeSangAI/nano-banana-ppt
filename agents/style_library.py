@@ -80,7 +80,7 @@ STYLE_LIBRARY = {
     "exploded_view": {
         "category": "结构与技术型",
         "aliases": ["exploded_view", "爆炸图", "拆解风", "分层风", "产品拆解"],
-        "description": "拆解结构风格。适合产品结构、模块关系、系统组成、"这个东西怎么工作"的解释场景。将整体拆解为独立模块，清晰展示连接关系和层次结构。",
+        "description": "拆解结构风格。适合产品结构、模块关系、系统组成、「这个东西怎么工作」的解释场景。将整体拆解为独立模块，清晰展示连接关系和层次结构。",
         "palette": ["#1A1A2E", "#16213E", "#E94560", "#0F3460", "#FFFFFF"],
         "fonts": ["Roboto Mono", "Space Mono", "monospace"],
         "shape_language": "爆炸分散布局、同心圆层次、连接线标注、分区框架",
@@ -438,7 +438,7 @@ STYLE_LIBRARY = {
     "japanese_aesthetic": {
         "category": "Artistic & Avant-garde",
         "aliases": ["japanese_aesthetic", "wabi-sabi", "日式美学", "日式美学风", "和风", "日式极简", "枯山水"],
-        "description": "日本侘寂美学风格。适合文化内容、冥想引导、体现"不完美之美"的叙事场景。大地色系配合极度留白和不规则平衡，传递禅意、宁静和文化深度。",
+        "description": "日本侘寂美学风格。适合文化内容、冥想引导、体现「不完美之美」的叙事场景。大地色系配合极度留白和不规则平衡，传递禅意、宁静和文化深度。",
         "palette": ["#EAE7E0", "#4A4E4D", "#828C7E", "#B0A18F", "#2C3531", "#D4C5B0"],
         "fonts": ["Shippori Mincho", "Noto Serif JP", "serif"],
         "shape_language": "不规则平衡、细线分割、极度留白、自然比例",

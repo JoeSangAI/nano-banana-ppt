@@ -12,6 +12,7 @@ from openai import OpenAI
 
 from ..utils.llm_client import chat_completion_with_fallback, MODEL_FALLBACK_CHAIN
 from .style_library import get_curated_style, STYLE_LIBRARY
+from .reviewer import ReviewerAgent
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -329,71 +330,43 @@ Output format: ["#HEX1", "#HEX2", "#HEX3"]"""
         palette = style_config.get('palette', [])
         base_color = palette[0] if palette else "#FFFFFF"
 
-        prompt = f"""分析这份 PPT 大纲，识别不同的故事章节，为每个章节生成视觉主题。
+        # 构建 prompt（使用字符串拼接避免 f-string 格式化问题）
+        outline_for_prompt = outline_summary
+        palette_str = ", ".join(palette)
 
-【PPT 大纲】
-{outline_summary}
+        prompt = (
+            "分析这份 PPT 大纲，识别故事章节，生成视觉主题。\n\n"
+            "【PPT 大纲】\n" + outline_for_prompt + "\n\n"
+            "【全局风格】\n"
+            "字体=" + heading_font + "/" + body_font + "\n"
+            "基础色=" + base_color + "\n"
+            "调色板=" + palette_str + "\n\n"
+            "【任务】识别故事章节，定义每章节：点缀色、视觉母题、纸艺技法、情感基调。\n\n"
+            "【输出格式】只输出 JSON，不要任何其他文字：\n"
+            '{"g":{"pt":"纸张","ty":"字体","co":"构图","bc":"基础色"},"c":[{"n":"章节名","p":[2,3],"a":"点缀色","m":"母题","t":"技法","e":"情感"}]}\n\n'
+            "【重要】点缀色在调色板内，母题有辨识度，全局约束严格"
+        )
 
-【全局风格】
-- 字体：{heading_font}（标题）、{body_font}（正文）
-- 基础色：{base_color}
-- 调色板：{', '.join(palette)}
-
-【任务】
-1. 识别大纲中的不同故事章节或主题段落
-2. 为每个章节定义：
-   - 点缀色（从调色板中选择或使用协调色）
-   - 视觉母题（该章节的标志性视觉元素）
-   - 纸艺技法（如适用）
-   - 情感基调（关键词）
-
-3. 定义全局一致性约束：
-   - 纸张质感（所有页面统一）
-   - 字体系统（所有页面统一）
-   - 构图方式（所有页面统一）
-   - 基础色调（所有页面统一）
-
-【输出格式】严格的 JSON：
-{{
-  "global_consistency": {{
-    "paper_texture": "描述",
-    "typography": "{heading_font} + {body_font}，全局统一",
-    "composition": "构图方式",
-    "base_color": "{base_color}"
-  }},
-  "chapters": [
-    {{
-      "chapter_name": "章节名称",
-      "pages": [2, 3, 4],
-      "visual_theme": {{
-        "accent_color": "#HEX 颜色名（情感描述）",
-        "visual_motif": "关键视觉元素",
-        "paper_technique": "纸艺技法描述",
-        "emotional_tone": "情感关键词"
-      }}
-    }}
-  ]
-}}
-
-【重要】
-- 点缀色要在调色板色系内，保持整体和谐
-- 每个章节的视觉母题要有辨识度，但都在同一风格框架下
-- 全局一致性约束必须严格，确保整体统一感"""
 
         try:
             response = chat_completion_with_fallback(
                 self.client, model=self.model, model_fallback=MODEL_FALLBACK_CHAIN,
                 messages=[
-                    {"role": "system", "content": "你是一位专业的艺术总监。只输出有效的 JSON，不要有任何其他文字。"},
+                    {"role": "system", "content": "你是一位专业的艺术总监。严格只输出 JSON，不要输出任何其他文字。"},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.7
+                temperature=0.3
             )
 
             result_text = response.choices[0].message.content.strip()
 
+            # 清理 <think> 思考过程标签
+            result_text = re.sub(r'<think>.*?</think>', '', result_text, flags=re.DOTALL | re.IGNORECASE)
+            result_text = result_text.strip()
+
             # 清理可能的 markdown 代码块标记
             result_text = re.sub(r'^```json\s*', '', result_text)
+            result_text = re.sub(r'^```\s*', '', result_text)
             result_text = re.sub(r'```\s*$', '', result_text)
             result_text = result_text.strip()
 
@@ -404,8 +377,7 @@ Output format: ["#HEX1", "#HEX2", "#HEX3"]"""
             return chapter_themes
 
         except json.JSONDecodeError as e:
-            logger.error(f"章节视觉主题 JSON 解析失败: {e}")
-            logger.error(f"原始响应: {result_text[:500]}")
+            logger.warning(f"⚠️ 章节视觉主题 JSON 解析失败，使用默认值: {e}")
             # 返回默认值
             return {
                 "global_consistency": {
@@ -417,7 +389,7 @@ Output format: ["#HEX1", "#HEX2", "#HEX3"]"""
                 "chapters": []
             }
         except Exception as e:
-            logger.error(f"生成章节视觉主题失败: {e}")
+            logger.warning(f"⚠️ 生成章节视觉主题失败，使用默认值: {e}")
             return {
                 "global_consistency": {
                     "paper_texture": "统一的纸张质感",
@@ -484,14 +456,21 @@ Output format: ["#HEX1", "#HEX2", "#HEX3"]"""
             response = chat_completion_with_fallback(
                 self.client, model=self.model, model_fallback=MODEL_FALLBACK_CHAIN,
                 messages=[
-                    {"role": "system", "content": "你是一位内容分析专家。只输出有效的 JSON。"},
+                    {"role": "system", "content": "你是一位内容分析专家。严格只输出 JSON，不要输出任何其他文字。"},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.7
+                temperature=0.3
             )
 
             result_text = response.choices[0].message.content.strip()
+
+            # 清理 <think> 思考过程标签
+            result_text = re.sub(r'<think>.*?</think>', '', result_text, flags=re.DOTALL | re.IGNORECASE)
+            result_text = result_text.strip()
+
+            # 清理可能的 markdown 代码块标记
             result_text = re.sub(r'^```json\s*', '', result_text)
+            result_text = re.sub(r'^```\s*', '', result_text)
             result_text = re.sub(r'```\s*$', '', result_text)
             result_text = result_text.strip()
 
@@ -500,7 +479,7 @@ Output format: ["#HEX1", "#HEX2", "#HEX3"]"""
             return content_analysis
 
         except Exception as e:
-            logger.error(f"内容深度分析失败: {e}")
+            logger.warning(f"⚠️ 内容深度分析失败: {e}")
             return {
                 "overall_theme": "",
                 "key_pages": []
@@ -1146,6 +1125,9 @@ CRITICAL: Output as plain text with section markers. No markdown formatting (no 
         from concurrent.futures import ThreadPoolExecutor, as_completed
         logger.info(f"🎨 Visual Agent: 正在并行生成 {len([t for t in tasks if not t['skip_llm']])} 页的视觉提示词...")
 
+        # 创建 Reviewer Agent 实例（用于每页 prompt 质量把关）
+        reviewer = ReviewerAgent(self.client)
+
         def generate_single_prompt(idx, task):
             if task.get('skip_llm'):
                 return idx, task['result']
@@ -1228,6 +1210,20 @@ CRITICAL: Output as plain text with section markers. No markdown formatting (no 
                     else:
                         # 在开头添加 TEXT TO RENDER 部分
                         final_prompt = text_to_render + "\n" + final_prompt
+
+                # 调用 Reviewer Agent 进行质量把关
+                speaker_notes = page.get('speaker_notes', '')
+                reviewed_prompt = reviewer.review_visual_prompt(
+                    visual_prompt=final_prompt,
+                    headline=headline,
+                    body=body,
+                    speaker_notes=speaker_notes,
+                    style_config=style_config,
+                    global_style=manifesto,
+                    context=None
+                )
+                final_prompt = reviewed_prompt
+
                 plan_item = page.copy()
                 plan_item['visual_prompt'] = final_prompt
                 plan_item['reference_image'] = task['reference_image_path']

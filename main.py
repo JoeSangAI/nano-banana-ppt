@@ -92,6 +92,7 @@ from tools.nano_banana_ppt.utils.review_plan import (
     derive_technical_plan,
     REVIEW_MD_FILENAME,
 )
+from tools.nano_banana_ppt.utils.content_validator import validate_content_visual_consistency
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)

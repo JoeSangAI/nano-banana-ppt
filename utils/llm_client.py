@@ -1,23 +1,14 @@
 """
-LLM 调用工具：支持 429/503/连接错误 时自动切换备用模型
-
-会话策略：
-- 429（配额耗尽）：任务内永久跳过该模型，因为配额窗口内无法恢复。
-- 503（临时高峰）：仅跳过本次调用，下次请求仍从主模型重试，因为 503 是暂时性的。
-- 连接错误 / timeout：仅跳过本次调用，下次请求仍从主模型重试。
-新任务（plan/execute 开始时）调用 reset_session() 重置 429 记忆。
+LLM 调用工具（仅使用 MiniMax-M2.7）
 """
 import logging
 from typing import List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
-# 主模型 → 备用模型链（当主模型不可用时依次尝试）
-# 注意：MiniMax API 需要使用 MiniMax 模型名；Google Gemini 模型名会导致 400 unknown model 错误
+# 仅使用 MiniMax-M2.7，无 fallback
 MODEL_FALLBACK_CHAIN: List[str] = [
-    "MiniMax-M2.7",           # 主模型：MiniMax M2.7
-    "gemini-2.5-flash",      # 备用 1：Google Gemini（仅在支持 Gemini 的 API 端点下有效）
-    "gemini-3.1-pro-preview",
+    "MiniMax-M2.7",
 ]
 
 # 本任务内已确认 429（配额耗尽）的模型，后续所有调用直接跳过

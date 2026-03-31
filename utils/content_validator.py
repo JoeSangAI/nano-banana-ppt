@@ -1,12 +1,14 @@
 """
-内容一致性校验模块 - 问题4的改进
-在 execute 前自动检测 content_plan.md 和 master_plan.md 的不一致
+内容一致性校验模块
+检查 content_plan.md 和 master_plan.md 的内容一致性
+在 execute 前自动检测不一致问题
 """
-
 import re
 from pathlib import Path
+from typing import List
 
-def validate_content_visual_consistency(project_dir: Path) -> list:
+
+def validate_content_visual_consistency(project_dir: Path) -> List[str]:
     """
     检查 content_plan.md 和 master_plan.md 的内容一致性
 
@@ -64,22 +66,3 @@ def validate_content_visual_consistency(project_dir: Path) -> list:
             issues.append(f"第{i+1}页标题不一致: '{ct}' vs '{mt}'")
 
     return issues
-
-
-# 在 main.py 的 execute_plan 函数开头添加：
-def execute_plan_with_validation(project_dir, skip_validation=False):
-    """
-    执行计划前先进行内容一致性校验
-    """
-    if not skip_validation:
-        issues = validate_content_visual_consistency(Path(project_dir))
-        if issues:
-            print("\n❌ 发现内容不一致问题:")
-            for issue in issues:
-                print(f"   - {issue}")
-            print("\n请先修复这些问题，或使用 --force 跳过校验")
-            return False
-        else:
-            print("\n✅ 内容一致性校验通过")
-
-    return True

@@ -6,6 +6,8 @@ import os
 import json
 import logging
 import re
+from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional
 
 from openai import OpenAI
@@ -185,6 +187,104 @@ class NarrativeAgent:
             return json.loads(result)
         except Exception:
             return {}
+
+    def _load_feedback(self, project_dir: str = None) -> Dict:
+        """
+        加载用户对该项目/主题的历史反馈
+        """
+        if not project_dir:
+            return {}
+
+        feedback_file = Path(project_dir) / ".narrative_feedback.json"
+        if feedback_file.exists():
+            try:
+                with open(feedback_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception:
+                return {}
+        return {}
+
+    def _save_feedback(self, project_dir: str, feedback: Dict) -> None:
+        """
+        保存用户反馈到项目目录
+        """
+        if not project_dir:
+            return
+
+        feedback_file = Path(project_dir) / ".narrative_feedback.json"
+        existing = self._load_feedback(project_dir)
+
+        # 合并反馈，保留历史记录
+        if 'history' not in existing:
+            existing['history'] = []
+
+        existing['history'].append({
+            'timestamp': datetime.now().isoformat(),
+            **feedback
+        })
+
+        # 更新最新反馈
+        existing['latest'] = feedback
+
+        try:
+            with open(feedback_file, 'w', encoding='utf-8') as f:
+                json.dump(existing, f, ensure_ascii=False, indent=2)
+            logger.info(f"💾 用户反馈已保存到 {feedback_file}")
+        except Exception as e:
+            logger.warning(f"⚠️ 无法保存反馈: {e}")
+
+    def _apply_feedback_to_constraints(self, constraints: Dict, feedback: Dict) -> Dict:
+        """
+        将历史反馈应用到约束中，优化生成效果
+        """
+        if not feedback:
+            return constraints
+
+        # 从反馈中提取调整项
+        if 'page_count_adjustment' in feedback:
+            pc = constraints.get('page_count', '10')
+            try:
+                base = int(pc)
+                adj = feedback['page_count_adjustment']
+                if isinstance(adj, int):
+                    constraints['page_count'] = str(max(5, base + adj))
+            except:
+                pass
+
+        if 'style_adjustment' in feedback:
+            constraints['style_preference'] = feedback['style_adjustment']
+
+        if 'narrative_notes' in feedback:
+            # 将用户的叙事偏好注入 design_system
+            notes = feedback['narrative_notes']
+            existing_ds = constraints.get('design_system', '')
+            constraints['design_system'] = f"{existing_ds}\n\n【用户叙事偏好】\n{notes}".strip()
+
+        if 'avoid_topics' in feedback:
+            # 用户不希望出现的话题
+            avoid = feedback['avoid_topics']
+            existing_ds = constraints.get('design_system', '')
+            constraints['design_system'] = f"{existing_ds}\n\n【避免的话题】\n{avoid}".strip()
+
+        return constraints
+
+    def save_user_feedback(
+        self,
+        project_dir: str,
+        feedback_type: str,
+        feedback_content: Dict
+    ) -> None:
+        """
+        公开方法：供外部调用保存用户反馈
+
+        feedback_type: "outline_revision" | "page_modification" | "general"
+        feedback_content: 具体反馈内容
+        """
+        feedback = {
+            'type': feedback_type,
+            **feedback_content
+        }
+        self._save_feedback(project_dir, feedback)
 
     def _enrich_outline_with_visual_decisions(self, outline: List[Dict], analyzed_images: List[Dict]) -> List[Dict]:
         """
@@ -565,6 +665,196 @@ class NarrativeAgent:
         logger.info(f"✅ 完整大纲解析完成，共 {len(outline)} 页，100%保留原文")
         return outline
 
+    def _fix_json_output(self, broken_json: str, expected_count: int = None) -> list:
+        """
+        修复破损的 JSON 数组，尝试多种策略：
+        1. 提取内部完整数组
+        2. 补全缺失的括号
+        3. 修复尾部逗号
+        4. 逐个提取 JSON 对象并重新组装
+        """
+        import json
+
+        # 策略1: 找最完整的数组
+        start_idx = broken_json.find('[')
+        end_idx = broken_json.rfind(']')
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            candidate = broken_json[start_idx:end_idx + 1]
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                pass
+
+        # 策略2: 补全缺失的尾部
+        candidate = broken_json.strip()
+        if not candidate.endswith(']'):
+            candidate = candidate.rstrip(',') + ']'
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+
+        # 策略3: 修复尾部逗号
+        candidate = re.sub(r',(\s*[}\]])', r'\1', candidate)
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+
+        # 策略4: 逐个提取 JSON 对象
+        objects = []
+        # 找所有可能的 JSON 对象（以 { 开头）
+        brace_positions = [m.start() for m in re.finditer(r'\{', candidate)]
+        for i, start in enumerate(brace_positions):
+            # 找对应的结束 brace
+            depth = 0
+            for j in range(start, len(candidate)):
+                if candidate[j] == '{':
+                    depth += 1
+                elif candidate[j] == '}':
+                    depth -= 1
+                    if depth == 0:
+                        obj_str = candidate[start:j + 1]
+                        try:
+                            obj = json.loads(obj_str)
+                            # 验证关键字段
+                            if 'page_num' in obj or 'type' in obj:
+                                objects.append(obj)
+                        except:
+                            pass
+                        break
+
+        if objects and (expected_count is None or len(objects) >= expected_count * 0.5):
+            # 按 page_num 排序并返回
+            try:
+                objects.sort(key=lambda x: x.get('page_num', 999))
+            except:
+                pass
+            return objects
+
+        raise ValueError(f"无法修复破损的 JSON，共提取到 {len(objects)} 个对象")
+
+    def _build_minimal_outline_prompt(self, content_slice: str, constraints: Dict, core_logic_skeleton: str = None) -> str:
+        """
+        构建最小化输出 prompt，用于最终兜底
+        只要求输出 page_num, type, text_content.headline, body 四个核心字段
+        """
+        return f"""你是一个 PPT 架构师。请将下面的文档转化为最简洁的幻灯片 JSON 数组。
+
+【项目背景】
+- 目标受众: {constraints.get('target_audience', '通用受众')}
+- 演示类型: {constraints.get('presentation_type', '商业演示')}
+
+【深度叙事蓝图】
+{core_logic_skeleton[:2000] if core_logic_skeleton else '无'}
+
+【输入原文】
+{content_slice[:3000]}
+
+【任务要求】
+请生成 {constraints.get('page_count', '10')} 页幻灯片，每页只输出：
+- page_num: 页码（整数）
+- type: 页面类型（content/hero/cover/ending）
+- text_content.headline: 标题
+- body: 要点数组（2-3个简短要点）
+
+【JSON 格式】
+[
+  {{"page_num": 1, "type": "cover", "text_content": {{"headline": "标题"}}, "body": ["要点1", "要点2"]}},
+  ...
+]
+
+直接输出 JSON 数组，不要有任何其他文字："""
+
+    def _heal_outline_schema(self, outline: list) -> list:
+        """
+        修复大纲中缺失或错误的关键字段
+        """
+        healed = []
+        for page in outline:
+            if not isinstance(page, dict):
+                continue
+
+            # 确保有 text_content
+            if 'text_content' not in page:
+                page['text_content'] = {}
+            tc = page['text_content']
+
+            # 确保 headline
+            if 'headline' not in tc:
+                # 尝试从其他字段获取
+                tc['headline'] = page.get('title') or page.get('core_message') or f"第{page.get('page_num', '?')}页"
+            elif not tc['headline']:
+                tc['headline'] = f"第{page.get('page_num', '?')}页"
+
+            # 确保 body
+            if 'body' not in page:
+                page['body'] = []
+            elif page['body'] is None:
+                page['body'] = []
+
+            # 确保 type
+            if 'type' not in page or not page['type']:
+                page['type'] = 'content'
+
+            # 确保 page_num
+            if 'page_num' not in page or not isinstance(page['page_num'], int):
+                try:
+                    page['page_num'] = int(page.get('page_num', len(healed) + 1))
+                except:
+                    page['page_num'] = len(healed) + 1
+
+            # 移动嵌套错误
+            if 'title' in page and 'text_content' in page:
+                if not tc['headline']:
+                    tc['headline'] = page.pop('title')
+
+            healed.append(page)
+
+        return healed
+
+    def _normalize_page_numbers(self, outline: list) -> list:
+        """
+        确保 page_num 是连续整数，从1开始
+        """
+        for i, page in enumerate(outline):
+            page['page_num'] = i + 1
+        return outline
+
+    def _validate_outline_schema(self, outline: list) -> tuple:
+        """
+        验证大纲 schema 的关键字段，返回 (is_valid, errors)
+        """
+        errors = []
+        required_fields = ['page_num', 'type', 'text_content']
+
+        for i, page in enumerate(outline):
+            if not isinstance(page, dict):
+                errors.append(f"Page {i}: 不是字典对象")
+                continue
+
+            # 检查必需字段
+            for field in required_fields:
+                if field not in page:
+                    errors.append(f"Page {i}: 缺少必需字段 '{field}'")
+
+            # 验证 text_content 结构
+            if 'text_content' in page:
+                tc = page['text_content']
+                if not isinstance(tc, dict):
+                    errors.append(f"Page {i}: text_content 不是字典")
+                elif 'headline' not in tc:
+                    errors.append(f"Page {i}: text_content 缺少 headline")
+
+            # 验证 page_num 是整数
+            if 'page_num' in page and not isinstance(page['page_num'], int):
+                try:
+                    page['page_num'] = int(page['page_num'])
+                except:
+                    errors.append(f"Page {i}: page_num 无法转换为整数")
+
+        return (len(errors) == 0, errors)
+
     def _extract_core_logic(self, content_context: str, constraints: Dict) -> str:
         """
         [Step 1/2] 从海量文本中提取深度叙事蓝图 (Narrative Blueprint)
@@ -646,6 +936,104 @@ class NarrativeAgent:
         2. 成熟大纲解析模式（现有）- 保留原标题，LLM转换格式
         3. 智能叙事模式（现有）- LLM生成叙事架构
         """
+
+        # 📝 加载用户历史反馈并应用到约束中
+        project_dir = None
+        if content_file_path:
+            project_dir = os.path.dirname(os.path.abspath(content_file_path))
+
+        feedback = self._load_feedback(project_dir)
+        if feedback:
+            logger.info(f"📝 检测到历史反馈，应用到本次生成...")
+            constraints = self._apply_feedback_to_constraints(dict(constraints), feedback.get('latest', {}))
+
+    def _merge_multiple_documents(self, file_paths: list) -> tuple:
+        """
+        合并多个文档的内容和元数据
+        返回: (merged_content, doc_metadata_list)
+        """
+        merged_parts = []
+        doc_metadata = []
+
+        for path in file_paths:
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+
+                filename = os.path.basename(path)
+                doc_label = os.path.splitext(filename)[0]
+
+                merged_parts.append(f"【文档: {doc_label}】\n{content[:5000]}")
+                doc_metadata.append({
+                    'path': path,
+                    'label': doc_label,
+                    'length': len(content)
+                })
+                logger.info(f"📄 已加载文档: {doc_label} ({len(content)} 字)")
+            except Exception as e:
+                logger.warning(f"⚠️ 无法读取文档 {path}: {e}")
+
+        merged_content = "\n\n---\n\n".join(merged_parts)
+        return merged_content, doc_metadata
+
+    def generate_narrative_outline_multi(
+        self,
+        content_file_paths: list,
+        constraints: Dict,
+        reuse_existing: bool = False
+    ) -> List[Dict]:
+        """
+        多文档联合分析模式
+        接收多个文档路径，联合分析后生成统一的叙事大纲
+        """
+        if len(content_file_paths) == 1:
+            return self.generate_narrative_outline(
+                content_context=open(content_file_paths[0], 'r', encoding='utf-8').read(),
+                constraints=constraints,
+                content_file_path=content_file_paths[0],
+                reuse_existing=reuse_existing
+            )
+
+        logger.info(f"📚 检测到 {len(content_file_paths)} 个文档，进入联合分析模式...")
+
+        merged_content, doc_metadata = self._merge_multiple_documents(content_file_paths)
+
+        enhanced_constraints = dict(constraints)
+        doc_names = [d['label'] for d in doc_metadata]
+        enhanced_constraints['design_system'] = f"""
+{enhanced_constraints.get('design_system', '')}
+
+【多文档联合分析】
+参与文档: {', '.join(doc_names)}
+请识别各文档之间的关系（补充/对比/展开），并在叙事中体现这种关系。
+""".strip()
+
+        return self.generate_narrative_outline(
+            content_context=merged_content,
+            constraints=enhanced_constraints,
+            content_file_path=content_file_paths[0],
+            reuse_existing=reuse_existing
+        )
+
+    def generate_narrative_outline(self, content_context: str, constraints: Dict, content_file_path: str = None, reuse_existing: bool = False) -> List[Dict]:
+        """
+        生成深度叙事大纲 (Three-Mode Pipeline)
+
+        智能判断三种模式：
+        1. 完整大纲直接复用模式（新增）- 100%保留原文，不调用LLM
+        2. 成熟大纲解析模式（现有）- 保留原标题，LLM转换格式
+        3. 智能叙事模式（现有）- LLM生成叙事架构
+        """
+
+        # 📝 加载用户历史反馈并应用到约束中
+        project_dir = None
+        if content_file_path:
+            project_dir = os.path.dirname(os.path.abspath(content_file_path))
+
+        feedback = self._load_feedback(project_dir)
+        if feedback:
+            logger.info(f"📝 检测到历史反馈，应用到本次生成...")
+            constraints = self._apply_feedback_to_constraints(dict(constraints), feedback.get('latest', {}))
 
         # 🔍 检测是否是完整的 content_plan.md
         complete_plan_info = self.detect_complete_content_plan(content_context)
@@ -735,15 +1123,24 @@ class NarrativeAgent:
             target_pages = 10
 
         structure_instruction = ""
+        # 估算内容密度，决定拆分粒度
+        content_length = len(content_context)
+        content_density = content_length / max(target_pages, 1)  # 每页平均字数
+
         if target_pages > 10:
             structure_instruction = f"""
-   - **强制分页 (Page Count constraint)**: The user requested {target_pages} pages. You MUST output at least {target_pages} pages. Split concepts into multiple slides. For example, a single point can be split into a 'quote' slide, a 'data' slide, and a 'bullets' slide.
-   - **强制分节 (Section Structure)**：由于 PPT 页数较多，必须严格按照【深度叙事蓝图】来划分章节。
-   - 每一页都必须归属于某个 Section。
-   - 在每个 Section 开始时，必须插入一个 `section` 类型的过渡页。"""
+   - **【精确分页规则】**：用户要求 {target_pages} 页，每页内容密度约 {int(content_density)} 字/页。
+   - **每个主要论点 = 1-3 页**：一个核心观点需要"金句页(1页) + 论述页(1-2页)"
+   - **每个小节标题 = 1 页 section 过渡页**
+   - **数据/案例 = 单独 1 页**
+   - **禁止**：把 2 个独立论点塞进同一页
+   - **强制分节 (Section Structure)**：必须严格按叙事蓝图划分章节，每节以 `section` 类型过渡页开始。"""
         else:
-            structure_instruction = """
-   - **逻辑节奏**：必须严格按照【深度叙事蓝图】来划分 PPT 的起承转合。"""
+            # 短PPT：每个主要论点单独成页
+            structure_instruction = f"""
+   - **【分页规则】**：每个主要论点单独成页，每页控制在 {int(content_density * 1.5)} 字以内。
+   - **禁止**：把多个独立观点合并到一页。
+   - **逻辑节奏**：严格按叙事蓝图划分起承转合。"""
 
         outline_content_limit = 8000 if len(content_context) > 20000 else 16000
         content_slice = content_context[:outline_content_limit]
@@ -790,13 +1187,13 @@ class NarrativeAgent:
 
 2. **内容提炼法则 (Content Refinement - CRITICAL)**：
    - PPT 不是 Word 的搬运工！**绝对不要把大段原话直接复制到 body 中**。
-   - **Slide 上只放“提词器” (Body)**：将复杂的原文提炼为极简、有力、口语化或商业化的文案。
-   - **【打破僵化列表】**：不要全篇都用生硬的“名词：解释”这样的 Bullet Points！
+   - **【Body 简洁硬性规则】**：每条 body 不超过 20 字！使用短语而非完整句子。例如：”用户流失严重” 而非 “根据数据显示，用户流失情况非常严重”。
+   - **【打破僵化列表】**：不要全篇都用生硬的”名词：解释”这样的 Bullet Points！
      - 你可以使用连贯的**一两句短语或短段落 (Paragraph)**。
      - 你也可以只放**几个核心关键词 (Keywords)**。
      - 只有在真正需要并列列举时，才使用列表项。增加文案的可读性、连贯性和力量感。
-   - **把“肉”藏进备注 (Speaker Notes)**：为每页生成详尽的 `speaker_notes` 字段。将原文中那些精彩但冗长的长句、具体的案例细节、讲师需要补充的背景知识，全部放到这里。这样幻灯片才能保持清爽，同时不丢失任何信息深度。
-   - **标题多设问、少平铺 (Headline - Q&A Style)**：大标题优先用设问句引导逻辑。**副标题按需出现**：仅当能补充关键信息或承上启下时使用；金句页、封面可省略。
+   - **【Speaker Notes 详细度强制要求】**：每页 speaker_notes 至少 50 字！必须包含：具体案例细节 / 原文背景 / 听众可能的问题及回答思路。如果没有详细内容，标注”（无）”。
+   - **【标题必须设问】**：至少 60% 的页面标题必须是设问句！格式：”[核心词]是什么/为何/如何？” 例如：”为何增长陷入停滞？”、”如何突破瓶颈？”、”什么才是真正的机会？”
    - **公式与金句 (Formula & Golden Quote)**：对核心概念须提炼为可记忆的形式。用 `hero` 页或显眼位置呈现。
    - **抬机率设计**：在合适位置穿插「可拍照页」——金句、翔实数据、框架图、公式、行动指引。每 10-15 页至少 2-3 处；结尾优先放一句可拍照金句。
 
@@ -875,13 +1272,18 @@ class NarrativeAgent:
 
         prompt = build_outline_prompt(content_slice, lightweight=False)
 
-        max_retries = 2
+        max_retries = 3  # 增加一次重试
         last_error = None
         for attempt in range(max_retries):
             try:
                 if attempt == 1:
                     # Stability fallback: shorter input, simpler planning burden.
                     prompt = build_outline_prompt(content_slice[: min(len(content_slice), 5000)], lightweight=True)
+                elif attempt == 2:
+                    # 最后的兜底：要求模型只输出最核心的字段
+                    prompt = self._build_minimal_outline_prompt(content_slice, constraints, core_logic_skeleton)
+                    logger.info("🧠 Narrative Agent: 使用最小化输出提示进行最终尝试...")
+
                 response = chat_completion_with_fallback(
                     self.client, model=self.outline_model, model_fallback=MODEL_FALLBACK_CHAIN,
                     messages=[
@@ -896,15 +1298,33 @@ class NarrativeAgent:
                 end_idx = content.rfind(']')
                 if start_idx != -1 and end_idx != -1:
                     content = content[start_idx:end_idx + 1]
-                
-                outline = json.loads(content)
+
+                # 策略1: 直接解析
+                try:
+                    outline = json.loads(content)
+                except json.JSONDecodeError:
+                    # 策略2: 尝试修复破损 JSON
+                    logger.warning(f"JSON 直接解析失败，尝试修复...")
+                    outline = self._fix_json_output(content)
+
+                # 策略3: 验证 schema 并修复
+                is_valid, errors = self._validate_outline_schema(outline)
+                if not is_valid:
+                    logger.warning(f"Schema 验证失败，尝试修复: {errors[:3]}")
+                    outline = self._heal_outline_schema(outline)
+
+                # 确保 page_num 是连续整数
+                outline = self._normalize_page_numbers(outline)
+
+                logger.info(f"✅ 叙事大纲生成完成，共 {len(outline)} 页")
                 return self._enrich_outline_with_visual_decisions(outline, analyzed_images)
+
             except json.JSONDecodeError as e:
                 last_error = e
                 if attempt < max_retries - 1:
                     logger.warning(f"JSON 解析失败，重试 ({attempt + 1}/{max_retries}): {e}")
                 else:
-                    logger.error(f"叙事大纲 JSON 解析失败 (已重试): {e}")
+                    logger.error(f"叙事大纲 JSON 解析失败 (已重试 {max_retries} 次): {e}")
                     raise
             except Exception as e:
                 logger.error(f"叙事大纲生成失败: {e}")
