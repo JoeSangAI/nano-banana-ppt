@@ -238,11 +238,14 @@ class PPTGenerator:
             if overlay_areas:
                 areas_str = " and ".join(overlay_areas)
                 tech_suffix += f" CRITICAL VISUAL CONSTRAINT: You ABSOLUTELY MUST leave {areas_str} completely BLANK and EMPTY. Do NOT generate ANY text, shapes, or complex backgrounds in this area. It must be a flat, solid color gradient because a photo will be pasted over it later."
-                
+
             if blend_areas:
                 areas_str = " and ".join(blend_areas)
-                tech_suffix += f" Place the product shown in the reference image into {areas_str} of this composition."
-
+                tech_suffix += f" CRITICAL INSTRUCTION: This image must contain ALL of the provided reference images (the ones in this prompt). Each reference image is a REAL PHOTOGRAPH that must appear COMPLETELY and UNCHANGED in the final output - do NOT modify, crop, redraw, distort, or alter any reference image. Keep their original content, colors, people, objects, text, and spatial composition exactly as-is. The reference images are the CONTENT of this slide - you are only generating the background environment around them. If a reference image shows a person, product, or scene, that exact person/product/scene must appear unchanged in your output."
+            elif native_images and len(native_images) > 0:
+                # 有原生图片但没有明确位置时，让 AI 根据图片内容自动决定最佳位置
+                num_imgs = len(native_images)
+                tech_suffix += f" CRITICAL INSTRUCTION: You have {num_imgs} reference images provided in this prompt. ALL {num_imgs} reference images must appear COMPLETELY and UNCHANGED in your output. Each one is a REAL PHOTOGRAPH - do NOT modify, redraw, blend, distort, or alter any of them. Their original content, colors, people, objects, text, and spatial composition must remain pixel-perfect. You are ONLY generating the background - the reference images are the content and must appear exactly as they are. Do not merge, composite, or regenerate the reference images in any way."
 
 
         full_prompt = description + tech_suffix
@@ -268,7 +271,7 @@ class PPTGenerator:
             
             messages = [{"role": "user", "content": [{"type": "text", "text": full_prompt}]}]
             if reference_images:
-                MAX_REFERENCE_IMAGES = 4
+                MAX_REFERENCE_IMAGES = 14  # Gemini 3 series via DeerAPI supports up to 14 reference images
                 for ref_img in reference_images[:MAX_REFERENCE_IMAGES]:
                     buffered = BytesIO()
                     ref_img.save(buffered, format="PNG")
@@ -320,7 +323,7 @@ class PPTGenerator:
             parts = [{"text": full_prompt}]
     
             # 参考图片：[0]=模板风格图(可选) + [1..N]=原生融合图，Gemini API 最多支持 4 张
-        MAX_REFERENCE_IMAGES = 4
+        MAX_REFERENCE_IMAGES = 14  # Gemini 3 series via DeerAPI supports up to 14 reference images
         if reference_images:
             for ref_img in reference_images[:MAX_REFERENCE_IMAGES]:
                 buffered = BytesIO()

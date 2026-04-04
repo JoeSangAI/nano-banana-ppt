@@ -393,6 +393,9 @@ def generate_visual_plan(plan_dir: str, style_preference: str = None):
     narrative_outline = state.get("narrative_outline", [])
     constraints = state.get("constraints", {})
 
+    # 保存原始的 state_narrative_outline（包含 native_images），用于后续合并
+    state_narrative_outline = narrative_outline.copy() if narrative_outline else []
+
     # 尝试从用户可能编辑过的 content_plan.md 读取最新大纲（覆盖 state 中的旧数据）
     content_md_path = project_dir / "content_plan.md"
     if content_md_path.exists():
@@ -478,6 +481,7 @@ def generate_visual_plan(plan_dir: str, style_preference: str = None):
             content_md_path_str, style_config, meta,
             manifesto=manifesto_text,
             per_slide_suggestions=per_slide_suggestions,
+            state_narrative_outline=state_narrative_outline,  # 传入原始 outline（包含 native_images）
         )
     else:
         raise FileNotFoundError(f"content_plan.md 不存在: {content_md_path}。请先运行 plan-content。")

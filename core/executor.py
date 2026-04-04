@@ -27,10 +27,11 @@ BOOKEND_FAMILY = {'cover', 'back', 'ending'}
 MAX_PARALLEL_WORKERS = 2  # Reduced from 3 to 2 for better stability
 
 
-def _generate_single_slide(slide, visual_plan, slides_dir, generator, resolution, masters, clean_background_image=None):
+def _generate_single_slide(slide, visual_plan, slides_dir, generator, resolution, masters, clean_background_image=None, project_dir=None):
     """
     单页生成逻辑，供串行或并行调用
     masters: dict {'content': img, 'section': img, 'hero': img}
+    project_dir: 项目工作目录，用于解析相对路径
     """
     # Check for table data first
     table_data = slide.get('table_data') or slide.get('text_content', {}).get('table_data')
@@ -107,7 +108,15 @@ def _generate_single_slide(slide, visual_plan, slides_dir, generator, resolution
     # 把融合图喂给 reference_images
     for bi in blend_images:
         try:
-            bi_img = Image.open(bi['path'])
+            # Resolve relative paths against project_dir
+            img_path = bi['path']
+            if not os.path.isabs(img_path):
+                # Try project_dir first
+                if project_dir:
+                    abs_path = os.path.normpath(os.path.join(project_dir, img_path))
+                    if os.path.exists(abs_path):
+                        img_path = abs_path
+            bi_img = Image.open(img_path)
             if bi_img.mode != "RGB":
                 bi_img = bi_img.convert("RGB")
             reference_images.append(bi_img)
@@ -298,7 +307,7 @@ def execute_plan(plan_file: str, output_name: str = "Final_Presentation",
             try:
                 # Pass current masters state (some might be None, that's expected for seeds)
                 _, img = _generate_single_slide(
-                    slide, visual_plan, slides_dir, generator, resolution, masters, clean_background_image
+                    slide, visual_plan, slides_dir, generator, resolution, masters, clean_background_image, project_dir=str(proj)
                 )
                 images_dict[slide['page_num']] = img
                 
@@ -329,7 +338,7 @@ def execute_plan(plan_file: str, output_name: str = "Final_Presentation",
         max_exec_attempts = 2
         for attempt in range(max_exec_attempts):
             try:
-                return _generate_single_slide(s, visual_plan, slides_dir, generator, resolution, masters, clean_background_image)
+                return _generate_single_slide(s, visual_plan, slides_dir, generator, resolution, masters, clean_background_image, project_dir=str(proj))
             except Exception as e:
                 logger.warning(f"Page {pn} Executor attempt {attempt+1}/{max_exec_attempts} failed: {e}")
                 if attempt < max_exec_attempts - 1:

@@ -23,6 +23,7 @@ def build_master_plan_from_content_plan(
     meta: Dict,
     manifesto: str = "",
     per_slide_suggestions: Dict[int, str] = None,
+    state_narrative_outline: List[Dict] = None,
 ) -> str:
     """
     从 content_plan.md 文件读取内容大纲,结合 style_config 生成完整的 visual_plan.md
@@ -33,6 +34,7 @@ def build_master_plan_from_content_plan(
         meta: 元信息
         manifesto: 视觉主张文本
         per_slide_suggestions: {page_num: visual_suggestion_str} — VisualDirector 为每页生成的视觉描述
+        state_narrative_outline: 可选，从 _content_state.json 传入的 narrative_outline（包含 native_images）
     """
     # 读取 content_plan.md 并使用 parse_review_md 正确解析
     with open(content_md_path, 'r', encoding='utf-8') as f:
@@ -59,6 +61,16 @@ def build_master_plan_from_content_plan(
             pnum = page.get("page_num")
             if pnum in per_slide_suggestions:
                 page["visual_suggestion"] = per_slide_suggestions[pnum]
+
+    # 如果传入了 state_narrative_outline，合并 native_images 信息
+    if state_narrative_outline:
+        state_by_pnum = {p.get("page_num"): p for p in state_narrative_outline}
+        for page in narrative_outline:
+            pnum = page.get("page_num")
+            if pnum in state_by_pnum:
+                state_page = state_by_pnum[pnum]
+                if state_page.get("native_images"):
+                    page["native_images"] = state_page.get("native_images")
 
     # 调用 build_review_md 生成完整的审阅计划
     return build_review_md(narrative_outline, style_config, meta, manifesto)
@@ -727,27 +739,34 @@ def build_review_md(
         if native_images:
             lines.append("- **📥 原生图片**：")
             for idx, img in enumerate(native_images):
-                path = img.get('path', 'unknown_path')
-                role = img.get('semantic_role', '')
-                mode = img.get('integration_mode', 'overlay')
-                mode_str = "[融合]" if mode == "blend" else "[叠加]"
-                bbox = img.get('bounding_box', {})
-                if bbox:
-                    bbox_str = f"left: {bbox.get('left')}, top: {bbox.get('top')}, width: {bbox.get('width')}, height: {bbox.get('height')}"
+                # 支持字符串格式（如 "native_images/slide3_img1.png"）或字典格式
+                if isinstance(img, str):
+                    path = img
+                    role = ''
+                    mode = 'overlay'
+                    bbox_str = 'center'
                 else:
-                    bbox_str = img.get('layout', 'center')
+                    path = img.get('path', 'unknown_path')
+                    role = img.get('semantic_role', '')
+                    mode = img.get('integration_mode', 'overlay')
+                    bbox = img.get('bounding_box', {})
+                    if bbox:
+                        bbox_str = f"left: {bbox.get('left')}, top: {bbox.get('top')}, width: {bbox.get('width')}, height: {bbox.get('height')}"
+                    else:
+                        bbox_str = img.get('layout', 'center')
+                mode_str = "[融合]" if mode == "blend" else "[叠加]"
                 # 简化格式，去掉多余的信息和标签，只保留角色、预览和位置信息
-                
+
                 # Make sure the path is correct relative to content_file when generating review md
                 # Or keep it as absolute path
                 content_file = meta.get("content_file", "")
                 base_dir = os.path.dirname(os.path.abspath(content_file)) if content_file else ""
-                
+
                 if not os.path.isabs(path) and base_dir:
                     abs_path = os.path.normpath(os.path.join(base_dir, path))
                     if os.path.exists(abs_path):
                         path = abs_path
-                
+
                 img_src = f"file://{path}" if os.path.isabs(path) else path
                 lines.append(f"  {idx+1}. {mode_str} {role} <img src=\"{img_src}\" height=\"40\" style=\"vertical-align: middle;\" /> (`{bbox_str}`)")
             lines.append("")
@@ -760,10 +779,11 @@ def build_review_md(
     return "\n".join(lines)
 
 
-def parse_review_md(md_text: str) -> Dict[str, Any]:
+def parse_review_md(md_text: str, project_dir: str = None) -> Dict[str, Any]:
     """
     解析 plan_for_review.md，返回结构化数据。
     返回: { "meta": {...}, "style": {...}, "pages": [ {...}, ... ] }
+    project_dir: 可选，用于解析 native_images 相对路径
     """
     pages = []
     current_page = None
@@ -822,7 +842,7 @@ def parse_review_md(md_text: str) -> Dict[str, Any]:
     }
 
     page_blocks = re.findall(
-        r"###\s*第\s*(\d+)\s*页\s*·\s*(\S+)\s*\n\n(.*?)(?=\n###\s*第|\n[-─]{3,}\s*\n|\Z)",
+        r"###\s*第\s*(\d+)\s*页\s*·\s*\[?([^\]\n]+)\]?\s*\n\n(.*?)(?=\n###\s*第|\n[-─]{3,}\s*\n|\Z)",
         md_text,
         re.DOTALL,
     )
@@ -832,8 +852,21 @@ def parse_review_md(md_text: str) -> Dict[str, Any]:
         # 页面类型不再在 markdown 中体现，从原始数据或者推测，或者默认为 content
         # 我们需要保留它如果原本就在 JSON 中，但因为 plan_for_review 会被重新解析生成 JSON，
         # 所以我们需要尽量保证不要丢失信息。既然我们在 title 里写了 "### 第 X 页 · 页面类型"
-        # 我们可以从标题里提取类型
-        ptype = type_map.get(ptype_cn, "content")
+        # 我们可以从标题里提取类型（支持方括号格式如 [COVER 封面]）
+        ptype_cn_clean = ptype_cn.replace("COVER", "").replace("CHAPTER", "").replace("GOLD_QUOTE", "").replace("CASE", "").replace("IMAGE", "").replace("DATA", "").replace("INFO", "").replace("CAMPAIGN", "").replace("PROPOSAL", "").replace("MAP", "").replace("ENDING", "").strip()
+        for key in type_map:
+            if key in ptype_cn or key in ptype_cn.upper():
+                ptype = type_map[key]
+                break
+        else:
+            ptype = type_map.get(ptype_cn.strip().split()[0] if ptype_cn.strip() else "", "content")
+            if ptype == "content" and ptype_cn:
+                # 尝试从方括号内的英文类型名映射
+                en_type_match = re.search(r'\b(Cover|Chaper|Gold_quote|Case|Image|Data|Info|Campaign|Proposal|Map|Ending)\b', ptype_cn, re.IGNORECASE)
+                if en_type_match:
+                    en_type = en_type_match.group(1).lower()
+                    type_map_lower = {k.lower(): v for k, v in type_map.items()}
+                    ptype = type_map_lower.get(en_type, "content")
         headline = ""
         subhead = ""
         narrative_role = ""
@@ -993,21 +1026,32 @@ def parse_review_md(md_text: str) -> Dict[str, Any]:
                                 bbox[k.strip()] = float(v.strip())
                             except ValueError:
                                 pass
-                                
+
                     # Attempt to resolve relative paths
-                    content_file = meta.get("content_file", "")
-                    base_dir = os.path.dirname(os.path.abspath(content_file)) if content_file else ""
-                    if not os.path.isabs(path) and base_dir:
-                        abs_path = os.path.normpath(os.path.join(base_dir, path))
+                    # Use project_dir first since native_images are relative to project_dir
+                    # Fallback to content_file dir only if needed
+                    resolved_path = None
+                    if project_dir and not os.path.isabs(path):
+                        abs_path = os.path.normpath(os.path.join(project_dir, path))
                         if os.path.exists(abs_path):
-                            path = abs_path
-                    elif not os.path.exists(path):
-                        # Attempt to resolve if it's just a filename
-                        filename = os.path.basename(path)
-                        if base_dir:
-                            abs_path = os.path.normpath(os.path.join(base_dir, filename))
+                            resolved_path = abs_path
+
+                    if not resolved_path:
+                        content_file = meta.get("content_file", "")
+                        base_dir = os.path.dirname(os.path.abspath(content_file)) if content_file else ""
+                        if not os.path.isabs(path) and base_dir:
+                            abs_path = os.path.normpath(os.path.join(base_dir, path))
                             if os.path.exists(abs_path):
-                                path = abs_path
+                                resolved_path = abs_path
+                        elif not os.path.exists(path):
+                            # Attempt to resolve if it's just a filename
+                            filename = os.path.basename(path)
+                            if base_dir:
+                                abs_path = os.path.normpath(os.path.join(base_dir, filename))
+                                if os.path.exists(abs_path):
+                                    resolved_path = abs_path
+
+                    path = resolved_path if resolved_path else path
                     
                     native_images.append({
                         "path": path,
