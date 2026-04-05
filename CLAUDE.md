@@ -15,10 +15,12 @@ pip install openai python-pptx pillow pymupdf requests python-dotenv matplotlib
 
 Configure API keys in `.env` (auto-discovered at project root or `~/.cursor/skills/nano-banana-ppt/.env`):
 ```
-OPENAI_API_KEY=sk-...
-OPENAI_API_BASE=https://your-proxy/v1
+OPENAI_API_KEY=sk-...           # MiniMax for text
+OPENAI_API_BASE=https://api.minimax.chat/v1
+IMAGE_GEN_API_KEY=sk-...       # DeerAPI for image generation
+IMAGE_GEN_API_BASE=https://api.deerapi.com/v1
 ```
-`GOOGLE_API_KEY` is also accepted as a fallback for `OPENAI_API_KEY`.
+`IMAGE_GEN_API_KEY` is used by `core/generator.py` for Gemini image generation via DeerAPI. DeerAPI supports 1:4 + 4K + reference images.
 
 ## CLI Commands
 
@@ -110,7 +112,7 @@ nano-banana-ppt/
 ### Key Design Patterns
 
 - **Auto-bootstrap**: `main.py` automatically resolves its own location and sets up the correct `sys.path` / `tools/` structure, regardless of where it is invoked from.
-- **API client**: All agents use `openai.OpenAI` pointed at a Gemini-compatible endpoint. Image generation uses the native Gemini REST API (not OpenAI images).
+- **API client**: All agents use `openai.OpenAI` pointed at a Gemini-compatible endpoint. Image generation uses the native Gemini REST API (not OpenAI images). DeerAPI image generation: `extra_body={"image_config": {"aspect_ratio": "1:4", "imageSize": "4K"}}` — supports all ratios (1:1, 1:4, 9:16, etc.) and 4K resolution.
 - **Model fallback**: `utils/llm_client.py` maintains a session-scoped set of 429-exhausted models and falls back through `MODEL_FALLBACK_CHAIN` automatically.
 - **Seed-then-parallel execution**: `executor.py` first generates "seed" slides (first of each type: `content`, `section`, `hero`) serially to establish visual consistency masters, then generates remaining slides in parallel using those masters as `reference_images`.
 - **All-Blend architecture**: Native images from source documents are never hard-overlaid; they are passed as `reference_images` to Gemini with a redraw prompt for seamless integration.
