@@ -65,14 +65,14 @@ class VisualAgent:
         "infographic": "A dense, modular layout designed to hold multiple distinct data points or content blocks in a structured, easy-to-read grid."
     }
 
-    def __init__(self, api_key: str, api_base: str = None, prompt_mode: str = "verbose"):
+    def __init__(self, api_key: str, api_base: str = None, prompt_mode: str = "verbose", model_name: str = None):
         self.client = OpenAI(
             api_key=api_key,
             base_url=api_base or "https://generativelanguage.googleapis.com/v1beta/openai",
             timeout=120.0,
             max_retries=3
         )
-        self.model = "MiniMax-M2.7"
+        self.model = model_name if model_name else "MiniMax-M2.7"
         self.prompt_mode = prompt_mode  # "verbose" or "minimal"
 
     def analyze_content_depth(self, narrative_outline: List[Dict]) -> Dict:
@@ -398,91 +398,6 @@ Output format: ["#HEX1", "#HEX2", "#HEX3"]"""
                     "base_color": base_color
                 },
                 "chapters": []
-            }
-
-    def analyze_content_depth(self, narrative_outline: List[Dict]) -> Dict:
-        """
-        深度分析内容的情感核心和叙事结构
-
-        识别关键情节、泪点、思考点，为视觉表达提供指导
-
-        Returns:
-            {
-              "overall_theme": "主题",
-              "key_pages": [
-                {
-                  "page": 5,
-                  "moment": "关键情节描述",
-                  "emotional_peak": "泪点/思考点",
-                  "visual_emphasis": "视觉强调建议"
-                }
-              ]
-            }
-        """
-        logger.info("🎨 Visual Agent: 正在分析内容深度...")
-
-        # 构建内容摘要
-        content_summary = "\n".join([
-            f"P{p['page_num']}: {p.get('text_content', {}).get('headline', '')}\n正文: {' '.join(p.get('text_content', {}).get('body', [])[:2])}\n演讲备注: {p.get('speaker_notes', '')[:100]}"
-            for p in narrative_outline[:15]
-        ])
-
-        prompt = f"""深度分析这份 PPT 内容，识别情感核心和关键情节。
-
-【内容大纲】
-{content_summary}
-
-【任务】
-1. 提炼整体主题（一句话）
-2. 识别关键页面：
-   - 哪些是"泪点"（特别感人的情节）
-   - 哪些是"思考点"（发人深思的细节）
-   - 这些关键情节需要如何在视觉上强调
-
-【输出格式】严格的 JSON：
-{{
-  "overall_theme": "一句话主题",
-  "key_pages": [
-    {{
-      "page": 5,
-      "moment": "关键情节描述",
-      "emotional_peak": "泪点/思考点",
-      "visual_emphasis": "视觉强调建议"
-    }}
-  ]
-}}"""
-
-        try:
-            response = chat_completion_with_fallback(
-                self.client, model=self.model, model_fallback=MODEL_FALLBACK_CHAIN,
-                messages=[
-                    {"role": "system", "content": "你是一位内容分析专家。严格只输出 JSON，不要输出任何其他文字。"},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.3
-            )
-
-            result_text = response.choices[0].message.content.strip()
-
-            # 清理 <think> 思考过程标签
-            result_text = re.sub(r'<think>.*?</think>', '', result_text, flags=re.DOTALL | re.IGNORECASE)
-            result_text = result_text.strip()
-
-            # 清理可能的 markdown 代码块标记
-            result_text = re.sub(r'^```json\s*', '', result_text)
-            result_text = re.sub(r'^```\s*', '', result_text)
-            result_text = re.sub(r'```\s*$', '', result_text)
-            result_text = result_text.strip()
-
-            content_analysis = json.loads(result_text)
-            logger.info(f"✅ 已识别 {len(content_analysis.get('key_pages', []))} 个关键页面")
-            return content_analysis
-
-        except Exception as e:
-            logger.warning(f"⚠️ 内容深度分析失败: {e}")
-            return {
-                "overall_theme": "",
-                "key_pages": []
             }
 
     def review_visual_prompt(self, visual_prompt: str, visual_suggestion: str, text_content: Dict, page_num: int) -> str:
@@ -1331,3 +1246,7 @@ CRITICAL: Output ONLY the raw image-generation prompt text. No markdown formatti
                     visual_plan.append(res2)
 
         return visual_plan
+
+
+# 向后兼容别名
+VisualAgentFlash = VisualAgent
