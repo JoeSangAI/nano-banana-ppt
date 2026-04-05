@@ -106,46 +106,11 @@ def generate_design_manifesto(
     if template_mode:
         template_instruction = "TEMPLATE MODE IS ACTIVE: The design MUST heavily prioritize negative space, subdued/abstract backgrounds, and absolute minimalism so that the generated images can seamlessly sit behind or beside template content without clashing."
 
-    user_prompt = f"""Based on the presentation outline and the requested style, define a Design System Manifesto.
-
-【Inputs】
-- Outline Summary:
-{outline_summary}
-
-- Global Style Hint:
-{style_hint}
-
-{template_instruction}
-
-【Task】
-你需要生成一份针对这份 PPT 的"设计总监视觉设计提案"。
-1. 你的提案应该用流畅自然、通俗易懂的**中文大白话**（2-3段话）来撰写，就像一位资深设计总监在向客户做提案，解释我们为什么选择这样的色彩策略、情绪氛围，以及整体的视觉方向（拒绝任何塑料感和廉价的AI常见套路）。
-2. 同时，针对生图大模型，你需要提供一段**纯英文的严格负向提示词（Negative Prompt / Cliche Bans）**，禁止生成那些陈词滥调（例如发光大脑、3D漏斗、赛博节点等）。
-3. 你还需要提供一份**视觉多样性方案（visual_diversity_strategy）**：为这份 PPT 规划 4-6 种不同类别的视觉主体（visual motifs），确保整份 PPT 在统一风格下有足够的视觉丰富性和变化感。
-
-【CRITICAL: chinese_proposal 写作红线】
-- 只描述**色彩策略**（为什么选这些颜色、怎么搭配）、**情绪氛围**（整体给人什么感觉）、**方向性的视觉气质**（如"高级感"、"网感"、"克制"等）。
-- **绝对禁止**承诺任何具体的视觉技法或元素——例如"3D插画"、"对话气泡"、"贴纸元素"、"手绘风"、"动态粒子"、"霓虹灯效果"等。因为最终的图像由 AI 生图模型自由发挥，你无法保证这些具体技法一定会出现在最终成品中。
-- 正确示例：说"视觉上要有活力和张力" ✅，而不是"我们会用3D插画和贴纸" ❌
-- 总之：描述"感觉"和"方向"，不要承诺"手段"和"元素"。
-
-【CRITICAL: visual_diversity_strategy 规划原则】
-- 分析 Outline 的内容主题，为整份 PPT 规划 4-6 种**不同类别**的视觉主体（visual motifs），让每页的核心视觉元素有充分的变化。
-- **鼓励使用具象隐喻**（figurative imagery）：人物剪影、建筑场景、自然景观、物件特写、空间透视等，而不是全部退回到抽象几何体（如纯色石块、立方体、玻璃面板等）。
-- 即使内容比较抽象（如哲学话题、商业理念），也应该为每个概念找到一个**具体的视觉锚点**。例如：用"冰川融化"隐喻"不可逆转的改变"、用"灯塔"隐喻"使命"、用"空旷的城市"隐喻"消失"。
-- 关键原则：**同一类视觉主体不应连续出现超过 2 页**。如果出现石碑，不应全篇都是石碑；应在下一页切换到不同类别。
-- 每种 motif 写一句话描述使用场景。
-
-【Output Format】
-你必须且只能输出合法的 JSON 字符串，包含以下三个字段：
-{{
-  "chinese_proposal": "（这里写2-3段中文大白话的设计提案内容，只谈色彩策略、情绪氛围和方向性气质）",
-  "english_cliche_bans": "（这里写纯英文的严格禁止生成的元素清单，例如：NO glowing brains, NO generic 3D funnels...）",
-  "visual_diversity_strategy": "（纯英文。列出 4-6 种 visual motifs，每种一句话描述使用场景。例如：1. Solitary human silhouettes against vast landscapes — for slides about individual purpose and reflection. 2. Architectural ruins and empty plazas — for slides about disappearance and absence. ...）"
-}}
-
-不要输出任何其他的解释文字、Markdown 代码块符号等。直接输出 JSON。
-"""
+    user_prompt = (Path(__file__).parent / "prompts" / "review_plan_manifesto.txt").read_text(encoding="utf-8").format(
+        outline_summary=outline_summary,
+        style_hint=style_hint,
+        template_instruction=template_instruction,
+    )
 
     try:
         resp = chat_completion_with_fallback(
@@ -273,77 +238,11 @@ def generate_per_slide_visual_suggestions(
         "Write for a human to read and confirm — this is the creative brief for image generation."
     )
 
-    user_prompt = f"""【Global Style】
-- Style: {style_desc}
-- Color Palette: {palette_str}
-
-【Slides to Design — ALL DATA MUST APPEAR IN DESCRIPTION】
-{pages_text}
-
-【CRITICAL RULES — VIOLATION WILL PRODUCE WRONG OUTPUT】
-
-For EVERY slide:
-- Write 2-4 sentences of concrete Chinese visual description
-- Describe EXACT objects, lighting, composition, visual metaphors
-- For DATA slides: You MUST include ALL numbers from the table in your description. Do NOT summarize or omit any row.
-
-【ILLUSTRATION WITH TEXT MODE — 图文并茂模式】
-
-If a slide has "正文形态:illustration_with_text（图文并茂模式）":
-- The visual description MUST include the actual text content (标题、副标题、正文) as visible elements in the image
-- The text should appear as if handwritten, typed, or displayed on objects in the scene (e.g., on paper, screens, signs, notebooks)
-- This creates a "comic book" or "illustrated storybook" effect where the image and text complement each other
-- Example for illustration_with_text: "画面中央是一本打开的手工绘本，左页用棕色彩笔写着标题'2025年4月11日，深夜'，右页用铅笔画着深夜场景，一个女孩坐在床边，手里拿着手机，屏幕发出微光"
-- BAD for illustration_with_text: "画面是一个深夜场景" (missing the actual text content)
-
-【STYLE ANCHORING — 风格锚定 (CRITICAL)】
-
-P1 is the STYLE BENCHMARK for the ENTIRE presentation. ALL subsequent slides (P2, P3, P4, ...) MUST:
-- Use EXACTLY the same artistic technique as P1 (e.g., if P1 uses pencil sketch style, ALL pages must use pencil sketch)
-- Use EXACTLY the same color palette approach as P1
-- Use EXACTLY the same paper texture and rendering style as P1
-- Use EXACTLY the same line weight and shading style as P1
-- NEVER switch to a different artistic technique (e.g., don't mix watercolor with pencil sketch)
-
-For illustration_with_text slides: The illustration style (人物造型、场景渲染) MUST be consistent with P1's style, while the text elements appear naturally on objects in the scene.
-
-【STORY GROUPING — 故事分组感知 (CRITICAL)】
-
-When multiple consecutive slides belong to the SAME STORY, they MUST maintain PERFECT visual consistency:
-- Same perspective and viewpoint
-- Same lighting direction and quality
-- Same color tone and mood
-- Same level of detail and realism
-- Connected scenes should feel like panels from the same comic or pages from the same book
-
-Example of CORRECT behavior:
-- P2-P5 are all about "父亲's story" → ALL must use identical style, perspective, and technique
-- P6-P8 are all about "母亲's story" → ALL must use identical style, perspective, and technique
-
-Example of WRONG behavior:
-- P2 uses detailed illustration with warm tones, but P3 suddenly switches to minimalist line art with cool tones (SAME STORY, WRONG)
-
-SPECIFIC EXAMPLES OF CORRECT BEHAVIOR:
-- GOOD: "画面中央是一个天平，左边放着标注'5.5万亿（占电商30%）'的金色立方体，右边是标注'6000亿'的巨大红色圆环，天平向右侧倾斜"
-- BAD:   "画面中央是一个天平，对比左右两侧的数据差异"
-
-- GOOD: "四个数据卡片并排：'10.74亿（日活）'、'95%（渗透率）'、'18.3亿（抖音）'、'156分钟（时长）'"
-- BAD:   "四个数据卡片展示关键指标"
-
-【STYLE CONSISTENCY EXAMPLES】
-- GOOD for SAME STORY pages: P2描绘了"铅笔素描风格，深夜蓝色调，手机屏幕暖光"，P3也用"铅笔素描风格，深夜蓝色调，手机屏幕暖光"——完美一致
-- BAD for SAME STORY pages: P2是"铅笔素描风格"，P3突然变成"水彩渲染风格"——风格断裂，读者会感到困惑
-
-Output format (pure JSON, no markdown):
-{{
-  "slides": {{
-    "1": "配图描述（必须包含所有关键数据）...",
-    "2": "配图描述...",
-    ...
-  }}
-}}
-
-JSON only, no explanation:"""
+    user_prompt = (Path(__file__).parent / "prompts" / "review_plan_visual_suggestions.txt").read_text(encoding="utf-8").format(
+        style_desc=style_desc,
+        palette_str=palette_str,
+        pages_text=pages_text,
+    )
 
     import json, re
 

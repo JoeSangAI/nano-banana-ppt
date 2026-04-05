@@ -1,0 +1,39 @@
+Based on the presentation outline and the requested style, define a Design System Manifesto.
+
+【Inputs】
+- Outline Summary:
+{outline_summary}
+
+- Global Style Hint:
+{style_hint}
+
+{template_instruction}
+
+【Task】
+你需要生成一份针对这份 PPT 的"设计总监视觉设计提案"。
+1. 你的提案应该用流畅自然、通俗易懂的**中文大白话**（2-3段话）来撰写，就像一位资深设计总监在向客户做提案，解释我们为什么选择这样的色彩策略、情绪氛围，以及整体的视觉方向（拒绝任何塑料感和廉价的AI常见套路）。
+2. 同时，针对生图大模型，你需要提供一段**纯英文的严格负向提示词（Negative Prompt / Cliche Bans）**，禁止生成那些陈词滥调（例如发光大脑、3D漏斗、赛博节点等）。
+3. 你还需要提供一份**视觉多样性方案（visual_diversity_strategy）**：为这份 PPT 规划 4-6 种不同类别的视觉主体（visual motifs），确保整份 PPT 在统一风格下有足够的视觉丰富性和变化感。
+
+【CRITICAL: chinese_proposal 写作红线】
+- 只描述**色彩策略**（为什么选这些颜色、怎么搭配）、**情绪氛围**（整体给人什么感觉）、**方向性的视觉气质**（如"高级感"、"网感"、"克制"等）。
+- **绝对禁止**承诺任何具体的视觉技法或元素——例如"3D插画"、"对话气泡"、"贴纸元素"、"手绘风"、"动态粒子"、"霓虹灯效果"等。因为最终的图像由 AI 生图模型自由发挥，你无法保证这些具体技法一定会出现在最终成品中。
+- 正确示例：说"视觉上要有活力和张力" ✅，而不是"我们会用3D插画和贴纸" ❌
+- 总之：描述"感觉"和"方向"，不要承诺"手段"和"元素"。
+
+【CRITICAL: visual_diversity_strategy 规划原则】
+- 分析 Outline 的内容主题，为整份 PPT 规划 4-6 种**不同类别**的视觉主体（visual motifs），让每页的核心视觉元素有充分的变化。
+- **鼓励使用具象隐喻**（figurative imagery）：人物剪影、建筑场景、自然景观、物件特写、空间透视等，而不是全部退回到抽象几何体（如纯色石块、立方体、玻璃面板等）。
+- 即使内容比较抽象（如哲学话题、商业理念），也应该为每个概念找到一个**具体的视觉锚点**。例如：用"冰川融化"隐喻"不可逆转的改变"、用"灯塔"隐喻"使命"、用"空旷的城市"隐喻"消失"。
+- 关键原则：**同一类视觉主体不应连续出现超过 2 页**。如果出现石碑，不应全篇都是石碑；应在下一页切换到不同类别。
+- 每种 motif 写一句话描述使用场景。
+
+【Output Format】
+你必须且只能输出合法的 JSON 字符串，包含以下三个字段：
+{{
+  "chinese_proposal": "（这里写2-3段中文大白话的设计提案内容，只谈色彩策略、情绪氛围和方向性气质）",
+  "english_cliche_bans": "（这里写纯英文的严格禁止生成的元素清单，例如：NO glowing brains, NO generic 3D funnels...）",
+  "visual_diversity_strategy": "（纯英文。列出 4-6 种 visual motifs，每种一句话描述使用场景。例如：1. Solitary human silhouettes against vast landscapes — for slides about individual purpose and reflection. 2. Architectural ruins and empty plazas — for slides about disappearance and absence. ...）"
+}}
+
+不要输出任何其他的解释文字、Markdown 代码块符号等。直接输出 JSON。
