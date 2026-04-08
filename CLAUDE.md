@@ -88,7 +88,8 @@ nano-banana-ppt/
     visual.py          # VisualAgent: outline → visual prompts + style definition
     visual_flash.py    # Lighter/faster variant of VisualAgent
     template.py        # TemplateAgent: PDF/PPTX → extracted style + reference images
-    style_library.py   # 12 curated style presets (claude_minimalist, apple_keynote, etc.)
+    style_library.py   # Style loader: reads styles/*.md files at import time
+  styles/              # 38 visual style presets as Markdown files (YAML frontmatter + body)
   core/
     executor.py        # execute_plan(): orchestrates parallel image generation
     generator.py       # PPTGenerator: calls Gemini image API, assembles PPTX via python-pptx
@@ -120,5 +121,9 @@ nano-banana-ppt/
 
 ### Available Style Presets (`--style`)
 
-31 styles across 8 categories. Key ones:
+38 styles across 7 categories, defined as Markdown files in `styles/`. Each file uses YAML frontmatter (id, category, aliases, palette, fonts, best_for, avoid) and Markdown body sections (风格描述, 造型语言, 图像风格, 强调色用法).
+
+To add a custom style: create a new `.md` file in `styles/` following the same format. It will be auto-loaded at next run.
+
+Key presets:
 `blackboard`, `whiteboard`, `sketch_note`, `blueprint`, `exploded_view`, `minimal_data`, `terminal_tech`, `swiss_design`, `academic_paper`, `claude_minimalist`, `apple_keynote`, `liquid_glass`, `dark_luxury`, `executive_dashboard`, `strategic_infographic`, `sharp_minimalism`, `soft_3d_clay`, `corporate_memphis`, `paper_craft`, `magazine_editorial`, `yellow_black_editorial`, `modern_newspaper`, `black_orange_creative`, `neo_brutalism`, `holographic_chrome`, `cyberpunk`, `manga_narrative`, `sports_energy`, `digital_neo_pop`, `pink_street_style`, `japanese_aesthetic`, `traditional_chinese`, `royal_blue_red_watercolor`, `deformed_flat_persona`, `studio_mockup_premium`, `classic_pop_sculpture_vaporwave`, `tech_art_neon`, `mincho_handwritten_mix`
