@@ -269,11 +269,123 @@ class PMAgent:
 
     def _organize_user_intent(self, text: str) -> None:
         """
-        将用户原始输入整理为结构化的任务约束（占位实现）
+        将用户原始输入整理为结构化的任务约束
 
         Args:
             text: 用户文本输入
         """
-        # TODO: US-007 将实现完整的意图整理逻辑
-        logger.info("📝 整理用户意图（占位实现）")
-        pass
+        logger.info("📝 开始整理用户意图")
+
+        # 构建 prompt
+        prompt = f"""你是一个专业的产品经理，需要将用户的原始输入整理为结构化的任务约束。
+
+用户输入：
+{text}
+
+请分析用户输入，提取以下信息（以 JSON 格式返回）：
+
+1. input_type: 输入类型，从以下选项中选择一个
+   - "topic": 只给了一个主题或标题
+   - "article": 提供了完整的文章或长文本
+   - "outline": 提供了大纲或结构化内容
+   - "template_ppt": 基于已有的毛坯 PPT 进行修改
+   - "add_images": 为已有内容补充图片
+   - "modify_slide": 修改单个或少数几页
+
+2. goal: 任务目标（一句话概括用户想做什么）
+
+3. audience: 目标受众（如果用户提到了，否则为 null）
+
+4. tone: 语气/风格（如果用户提到了，否则为 null）
+   例如：专业、轻松、学术、商务等
+
+5. constraints: 关键限制（列表，提取用户明确提到的约束）
+   例如：页数限制、时间限制、必须包含的内容等
+
+6. image_anchors: 图片位置意图（列表，提取用户提到的图片需求）
+   每个元素包含：
+   - anchor: 语义锚点（图片应该出现在哪个内容段落）
+   - description: 图片描述或要求
+
+返回格式：
+{{
+  "input_type": "...",
+  "goal": "...",
+  "audience": "..." or null,
+  "tone": "..." or null,
+  "constraints": [...],
+  "image_anchors": [
+    {{"anchor": "...", "description": "..."}},
+    ...
+  ]
+}}
+
+只返回 JSON，不要有其他内容。"""
+
+        try:
+            # 调用 LLM
+            response = self.client.chat.completions.create(
+                model="gemini-2.0-flash-exp",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+            )
+
+            result_text = response.choices[0].message.content.strip()
+
+            # 提取 JSON（去除可能的 markdown 包裹）
+            import json
+            if result_text.startswith("```"):
+                result_text = result_text.split("```")[1]
+                if result_text.startswith("json"):
+                    result_text = result_text[4:]
+            result_text = result_text.strip()
+
+            result = json.loads(result_text)
+
+            logger.info(f"✅ 意图分析完成: {result['input_type']}")
+
+            # 更新或创建 Brief
+            brief = self.brief_manager.load()
+            if not brief:
+                # 创建新 Brief
+                brief = Brief(
+                    goal=result["goal"],
+                    audience=result.get("audience"),
+                    style_preference=result.get("tone"),
+                    constraints=result.get("constraints", []),
+                    image_requirements=result.get("image_anchors", []),
+                )
+                self.brief_manager.save(brief)
+                logger.info("✅ 创建新 Brief")
+            else:
+                # 更新现有 Brief
+                update_fields = {}
+                if result.get("goal"):
+                    update_fields["goal"] = result["goal"]
+                if result.get("audience"):
+                    update_fields["audience"] = result["audience"]
+                if result.get("tone"):
+                    update_fields["style_preference"] = result["tone"]
+                if result.get("constraints"):
+                    # 合并约束（去重）
+                    existing = set(brief.constraints)
+                    new_constraints = [c for c in result["constraints"] if c not in existing]
+                    update_fields["constraints"] = brief.constraints + new_constraints
+                if result.get("image_anchors"):
+                    # 合并图片需求（去重）
+                    existing_anchors = {req.get("anchor") for req in brief.image_requirements}
+                    new_reqs = [req for req in result["image_anchors"] if req.get("anchor") not in existing_anchors]
+                    update_fields["image_requirements"] = brief.image_requirements + new_reqs
+
+                if update_fields:
+                    self.brief_manager.update(**update_fields)
+                    logger.info(f"✅ 更新 Brief: {list(update_fields.keys())}")
+
+        except Exception as e:
+            logger.error(f"整理用户意图失败: {e}")
+            # 失败时创建一个最小化的 Brief
+            brief = self.brief_manager.load()
+            if not brief:
+                brief = Brief(goal=text[:200])  # 使用前 200 字符作为 goal
+                self.brief_manager.save(brief)
+                logger.warning("⚠️ 使用简化 Brief")
