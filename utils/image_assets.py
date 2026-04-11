@@ -179,3 +179,66 @@ class ImageAssetsManager:
             import logging
             logging.warning(f"轻量读图失败: {image_path} ({e})")
             return None
+
+    def save_to_json(self) -> None:
+        """
+        将图片资产保存到 JSON 文件
+        """
+        try:
+            # 确保输出目录存在
+            output_dir = Path(self.assets_file).parent
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            # 转换为字典列表
+            data = {
+                "assets": [asset.to_dict() for asset in self.assets]
+            }
+
+            # 写入文件
+            with open(self.assets_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
+        except Exception as e:
+            import logging
+            logging.error(f"保存图片资产失败: {self.assets_file} ({e})")
+            raise
+
+    def load_from_json(self) -> None:
+        """
+        从 JSON 文件加载图片资产
+        支持增量更新：不覆盖已有的轻量读图结果
+        """
+        if not Path(self.assets_file).exists():
+            return
+
+        try:
+            with open(self.assets_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            loaded_assets = [ImageAsset.from_dict(item) for item in data.get("assets", [])]
+
+            # 增量更新：合并已有资产和新加载的资产
+            for loaded_asset in loaded_assets:
+                existing_asset = self.get_asset_by_path(loaded_asset.path)
+                if existing_asset:
+                    # 如果已有资产，只更新空字段（不覆盖已有的轻量读图结果）
+                    if not existing_asset.image_type and loaded_asset.image_type:
+                        existing_asset.image_type = loaded_asset.image_type
+                    if not existing_asset.description and loaded_asset.description:
+                        existing_asset.description = loaded_asset.description
+                    if not existing_asset.recommended_mode and loaded_asset.recommended_mode:
+                        existing_asset.recommended_mode = loaded_asset.recommended_mode
+                    if not existing_asset.mode and loaded_asset.mode:
+                        existing_asset.mode = loaded_asset.mode
+                    if not existing_asset.semantic_anchor and loaded_asset.semantic_anchor:
+                        existing_asset.semantic_anchor = loaded_asset.semantic_anchor
+                    if not existing_asset.role and loaded_asset.role:
+                        existing_asset.role = loaded_asset.role
+                else:
+                    # 如果不存在，直接添加
+                    self.assets.append(loaded_asset)
+
+        except Exception as e:
+            import logging
+            logging.error(f"加载图片资产失败: {self.assets_file} ({e})")
+            raise
