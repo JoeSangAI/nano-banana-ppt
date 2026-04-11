@@ -1,0 +1,69 @@
+{
+  "assets": [
+    {
+      "path": "output/images/product_screenshot.png",
+      "mode": "ELEMENT_PRESERVE",
+      "semantic_anchor": "产品演示",
+      "role": "展示产品核心功能",
+      "status": "ready",
+      "light_read_result": {
+        "image_type": "screenshot",
+        "description": "产品界面截图，展示了 AI 内容生成的主界面，包含编辑器和预览区域",
+        "recommended_mode": "ELEMENT_PRESERVE",
+        "reason": "截图类图片建议保留 UI 元素，可以优化背景和细节"
+      }
+    },
+    {
+      "path": "output/images/market_chart.png",
+      "mode": "INTENT_FUSION",
+      "semantic_anchor": "市场规模",
+      "role": "展示市场数据",
+      "status": "ready",
+      "light_read_result": {
+        "image_type": "chart",
+        "description": "市场规模数据图表，显示 TAM/SAM/SOM 三层漏斗",
+        "recommended_mode": "INTENT_FUSION",
+        "reason": "图表类图片建议重新设计，使用更专业的视觉风格"
+      }
+    },
+    {
+      "path": "output/images/team_photo.jpg",
+      "mode": "ORIGINAL_PRESENT",
+      "semantic_anchor": "团队介绍",
+      "role": "展示团队成员",
+      "status": "ready",
+      "light_read_result": {
+        "image_type": "person",
+        "description": "团队合影，5 位成员在办公室前台",
+        "recommended_mode": "ORIGINAL_PRESENT",
+        "reason": "人物照片建议保留原图，只做轻微的光影调整"
+      }
+    },
+    {
+      "path": "output/images/competitor_logos.png",
+      "mode": "ELEMENT_PRESERVE",
+      "semantic_anchor": "竞品分析",
+      "role": "展示竞品对比",
+      "status": "ready",
+      "light_read_result": {
+        "image_type": "product",
+        "description": "竞品 Logo 对比图，包含 5 家主要竞争对手",
+        "recommended_mode": "ELEMENT_PRESERVE",
+        "reason": "产品类图片建议保留主体元素（Logo），可以重组布局"
+      }
+    },
+    {
+      "path": "output/images/hero_background.jpg",
+      "mode": "INTENT_FUSION",
+      "semantic_anchor": "封面",
+      "role": "封面背景图",
+      "status": "ready",
+      "light_read_result": {
+        "image_type": "scene",
+        "description": "科技感的抽象背景，蓝紫色渐变",
+        "recommended_mode": "INTENT_FUSION",
+        "reason": "场景类图片建议只取意向，完全重新创作"
+      }
+    }
+  ]
+}

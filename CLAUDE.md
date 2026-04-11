@@ -15,6 +15,50 @@ You are an autonomous coding agent working on a software project.
 9. Update the PRD to set `passes: true` for the completed story
 10. Append your progress to `progress.txt`
 
+## Nano Banana PPT v4 Architecture
+
+This project uses a **document-driven, PM-gated, image-first** architecture:
+
+### Core Concepts
+
+1. **PM Agent (Product Manager)**: Entry point that receives user input, maintains brief and image assets, routes to correct Gate
+2. **Three Gates**: Content → Visual → Execute
+3. **Document-Driven**: All plans are human-readable Markdown files that compile to machine-executable JSON
+4. **Image-First**: Images are defined upfront with three modes (INTENT_FUSION, ELEMENT_PRESERVE, ORIGINAL_PRESENT)
+
+### Key Files
+
+- `brief.md`: Single source of truth for user intent (goal, audience, style, constraints, image requirements)
+- `image_assets.json`: All images with lightweight VLM analysis (type, recommended mode, description)
+- `content_plan.md` → `content_plan.json`: Content structure with semantic anchors for images
+- `visual_plan.md` → `visual_plan.json`: Visual assignments with image blocks (path, mode, role, position)
+
+### Workflow
+
+1. **PM Intake**: User input → PM Agent extracts images, organizes intent, updates brief
+2. **Content Gate**: Generate content_plan.md with semantic anchors
+3. **Visual Gate**: Assign images to pages, generate visual_plan.md with image blocks
+4. **Execute Gate**: PM final review → compile plans → generate images → assemble PPTX
+
+### Image Modes
+
+- **INTENT_FUSION**: Take semantic meaning only, fully recreate (no recognizable elements)
+- **ELEMENT_PRESERVE**: Keep main subject (person/product), allow background recomposition
+- **ORIGINAL_PRESENT**: Pixel-level preservation, minimal adjustments
+
+### Document Normalization
+
+- `doc_normalizer.py` auto-fixes format issues at Gate transitions
+- Blocking issues stop execution, non-blocking issues are auto-fixed
+- Always runs before PM final review
+
+### PM Agent Responsibilities
+
+- Maintain `brief.md` and `image_assets.json`
+- Determine current Gate and rollback logic for modifications
+- Execute final intent review (resource check + prompt guard + consistency check)
+- All PM methods are called from `main.py` at appropriate Gate transitions
+
 ## Progress Report Format
 
 APPEND to progress.txt (never replace, always append):

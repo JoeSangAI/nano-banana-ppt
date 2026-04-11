@@ -2,9 +2,59 @@
 
 **基于大模型的高级全自动 PPT 生成引擎（专为 Cursor/AI Agent 设计的 Skill）**
 
-这是一个致力于“消除丑陋幻灯片”的开源工具。它不仅仅是将文本塞进模板里，而是通过多智能体（Multi-Agent）协作，**像一个真正的人类策划与视觉设计师一样**，帮你把长篇文档转化为逻辑严密、极具美感的高级 PPT。
+这是一个致力于”消除丑陋幻灯片”的开源工具。它不仅仅是将文本塞进模板里，而是通过多智能体（Multi-Agent）协作，**像一个真正的人类策划与视觉设计师一样**，帮你把长篇文档转化为逻辑严密、极具美感的高级 PPT。
 
 无论你是通过 Cursor 这样的 AI IDE 对它下达自然语言指令，还是作为开发者在服务器上部署，它都能为你交付媲美专业发布会的演示文稿。
+
+---
+
+## 🏗️ v4 架构：文档驱动 + PM 兜底 + 图片前置
+
+**v4 是一次重大架构升级**，引入了文档驱动、PM Agent 协调、图片前置定义的全新工作流。
+
+### 核心理念
+
+1. **文档驱动 (Document-Driven)**
+   - 所有计划都是人类可读的 Markdown 文件
+   - 用户可以直接编辑 Markdown，系统自动编译为可执行的 JSON
+   - 透明可控，拒绝黑盒
+
+2. **PM 兜底 (PM Agent Gatekeeper)**
+   - PM Agent 是系统入口，接收所有用户输入
+   - 维护 `brief.md`（任务意图）和 `image_assets.json`（图片资产）
+   - 在执行前进行三层审查：资源完整性 + Prompt 质量 + Brief 一致性
+
+3. **图片前置 (Image-First)**
+   - 图片在内容规划前就已定义和分析
+   - 三种图片模式精确控制生成策略：
+     - **INTENT_FUSION**: 只取语义，完全重新创作
+     - **ELEMENT_PRESERVE**: 保留主体元素，允许重组
+     - **ORIGINAL_PRESENT**: 像素级保留，最小改动
+
+### 工作流程
+
+```
+用户输入 → PM Intake → Content Gate → Visual Gate → Execute Gate
+              ↓              ↓              ↓              ↓
+          brief.md    content_plan.md  visual_plan.md   PPTX
+          image_assets.json    ↓              ↓
+                        content_plan.json  visual_plan.json
+```
+
+### 关键文件
+
+- **brief.md**: 任务意图的唯一真相源（goal, audience, style, constraints, image requirements）
+- **image_assets.json**: 所有图片的元数据和轻量读图结果
+- **content_plan.md**: 内容大纲，包含语义锚点（人类可编辑）
+- **visual_plan.md**: 视觉计划，包含图片块（人类可编辑）
+- **content_plan.json**: 编译后的内容计划（机器可执行）
+- **visual_plan.json**: 编译后的视觉计划（机器可执行）
+
+### 示例文件
+
+查看 `examples/` 目录：
+- `brief.md`: Brief 文件示例
+- `image_assets.json`: 图片资产示例
 
 ---
 
@@ -82,22 +132,46 @@ nano_banana_ppt/
 
 ### CLI 命令行调用
 
-**阶段一：生成审阅计划 (Phase 1)**
-```bash
-python3 -m tools.nano_banana_ppt.main plan "content.md" [template.pdf] [logo.png] [output_name] --style claude_minimalist
-```
-*这会生成一个 `plan_for_review.md`。你可以手动打开这个 Markdown 修改每页的标题或决定某页应该用什么图表。*
+**v4 架构采用三阶段工作流：**
 
-**阶段二：执行生成与组装 (Phase 2)**
+**阶段 1.1：内容规划 (Content Gate)**
 ```bash
-python3 -m tools.nano_banana_ppt.main execute output/ppt/your_project_dir --resolution 1K
+python3 -m tools.nano_banana_ppt.main plan-content "content.md" [template.pptx] [logo.png] [output_name] --pages 15 --briefing "为投资者展示产品价值"
 ```
+*生成 `content_plan.md`（内容大纲）和 `brief.md`（任务意图）。PM Agent 会自动提取图片、分析用户意图。*
 
-**独立生图与高清放大 (Upscale)**
-如果你对 PPT 里某几张图的清晰度不满意，或者想用于印刷：
+**阶段 1.5：视觉规划 (Visual Gate)**
 ```bash
-python3 -m tools.nano_banana_ppt.main upscale output/ppt/your_project_dir --resolution 4K --slides 1 3 5
+python3 -m tools.nano_banana_ppt.main plan-visual "output/ppt/your_project_dir" --style "liquid_glass"
 ```
+*生成 `visual_plan.md`（视觉计划），包含图片分配和视觉 prompt。系统会自动规范化 `content_plan.md`。*
+
+**阶段 2：执行生成 (Execute Gate)**
+```bash
+python3 -m tools.nano_banana_ppt.main execute "output/ppt/your_project_dir" --resolution 1K
+```
+*PM Agent 执行最终审查（资源完整性 + Prompt 质量 + Brief 一致性），然后生成图片并组装 PPTX。*
+
+**快速原型验证 (Prototype)**
+```bash
+python3 -m tools.nano_banana_ppt.main prototype "output/ppt/your_project_dir" --slides 1 2
+```
+*仅生成指定页面，快速验证视觉风格。*
+
+**高清放大 (Upscale)**
+```bash
+python3 -m tools.nano_banana_ppt.main upscale "output/ppt/your_project_dir" --resolution 4K --slides 1 3 5
+```
+*将指定页面放大到 4K 分辨率。*
+
+**重要参数：**
+- `--briefing`: 用户意图描述，PM Agent 会据此更新 brief.md
+- `--pages`: 期望页数
+- `--style`: 风格偏好（预设名称或自然语言描述）
+- `--slides`: 仅处理指定页面（用于局部修改）
+- `--force`: 跳过 PM 最终审查（调试用）
+- `--regenerate`: 强制重新生成 plan.json（覆盖缓存）
+- `--reuse-existing`: 复用完整大纲（避免内容被修改）
 
 ---
 
