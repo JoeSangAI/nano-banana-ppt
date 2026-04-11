@@ -46,3 +46,15 @@ Started: 2026年 4月11日 星期六 21时41分46秒 CST
   - update() 方法支持部分字段更新，自动保存
   - Brief 数据类包含：goal（必填）、audience、style_preference、constraints（列表）、image_requirements（字典列表）
 ---
+
+## 2026-04-11 22:15 - US-005
+- 创建了 PM Agent 基础框架
+- 文件变更：创建 agents/pm.py
+- **Learnings for future iterations:**
+  - PMAgent 是系统的入口和协调者，负责接收用户输入并路由到正确阶段
+  - PMAgent 持有 BriefManager 和 ImageAssetsManager 两个管理器
+  - intake() 方法接收用户输入（text/images/urls/template_pptx）
+  - determine_gate() 方法根据文件存在情况判断应进入哪个 Gate（Content/Visual/Execute）
+  - _extract_images_from_input() 和 _organize_user_intent() 是占位实现，将在后续 US 中完善
+  - 项目使用相对导入（from ..utils），需要作为模块运行（python -m tools.nano_banana_ppt.main）
+---
