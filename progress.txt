@@ -156,3 +156,20 @@ Started: 2026年 4月11日 星期六 21时41分46秒 CST
   - 封面和章节页默认添加占位图（如果没有图片锚点）
   - 图片位置推荐逻辑：封面/章节/hero 使用 full，截图/产品/图表使用 center，人物使用 right，场景使用 full
 ---
+
+## 2026-04-11 23:55 - US-013
+- 实现了 visual_plan.md 到 visual_plan.json 的编译器
+- 文件变更：创建 utils/compile_visual_plan.py
+- **Learnings for future iterations:**
+  - 编译器解析 visual_plan.md 中的图片块，生成可执行的 JSON 格式
+  - 根据三种图片模式生成不同的 visual_prompt 策略：
+    * INTENT_FUSION（意向融合）：只取语义，完全重新创作
+    * ELEMENT_PRESERVE（元素保留）：保留主体元素，允许重组背景和布局
+    * ORIGINAL_PRESENT（原图呈现）：保留长宽比，只做轻微加工
+  - JSON 输出包含 pages 数组，每个 page 包含 page_number, title, images
+  - 每个 image 包含 path, mode, role, position, visual_prompt 字段
+  - visual_prompt 是根据模式自动生成的完整提示词，包含页面上下文和创作要求
+  - 支持 PLACEHOLDER 占位符，编译时会统计待补图数量
+  - 使用 parse_image_blocks() 复用 doc_normalizer 的解析逻辑
+  - 编译器可以作为模块导入或命令行工具使用
+---
