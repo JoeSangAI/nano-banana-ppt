@@ -1,0 +1,417 @@
+{
+  "project": "Nano Banana PPT v4.1",
+  "branchName": "ralph/v4-architecture-upgrade",
+  "description": "升级为文档驱动、PM 兜底、图片前置定义的 PPT 生成系统",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "添加图片模式枚举和基础数据结构",
+      "description": "作为开发者，我需要定义三种图片模式（意向融合、元素保留、原图呈现）的枚举类型和基础数据结构。",
+      "acceptanceCriteria": [
+        "在 utils/ 下创建 image_assets.py，定义 ImageMode 枚举（INTENT_FUSION, ELEMENT_PRESERVE, ORIGINAL_PRESENT）",
+        "定义 ImageAsset 数据类，包含字段：path, mode, semantic_anchor, role, status",
+        "定义 ImageAssetsManager 类的基础结构（init 方法）",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "实现轻量读图功能",
+      "description": "作为系统，我需要对进入系统的图片进行轻量读图，判断图片类型和推荐模式。",
+      "acceptanceCriteria": [
+        "在 ImageAssetsManager 中实现 light_read_image() 方法",
+        "调用 VLM 判断图片类型（截图/人物/产品/图表/场景）",
+        "返回推荐模式和简短描述",
+        "结果写入 ImageAsset 对象",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "实现 image_assets.json 的读写",
+      "description": "作为系统，我需要能够持久化和加载图片资产信息。",
+      "acceptanceCriteria": [
+        "实现 ImageAssetsManager.save_to_json() 方法",
+        "实现 ImageAssetsManager.load_from_json() 方法",
+        "支持增量更新（不覆盖已有的轻量读图结果）",
+        "JSON 格式包含所有 ImageAsset 字段",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "创建 brief 文件结构和管理器",
+      "description": "作为系统，我需要维护一个 brief 文件作为任务意图的唯一真相源。",
+      "acceptanceCriteria": [
+        "在 utils/ 下创建 brief_manager.py",
+        "定义 Brief 数据类，包含：goal, audience, style_preference, constraints, image_requirements",
+        "实现 BriefManager 类，支持 load/save/update",
+        "brief 以 Markdown 格式存储，使用 YAML frontmatter",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "创建 PM Agent 基础框架",
+      "description": "作为系统，我需要一个 PM Agent 来接住用户输入并路由到正确阶段。",
+      "acceptanceCriteria": [
+        "在 agents/ 下创建 pm.py",
+        "定义 PMAgent 类，包含 brief_manager 和 image_assets_manager",
+        "实现 intake() 方法框架（接收用户输入）",
+        "实现 determine_gate() 方法（判断当前应进入哪个 Gate）",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "PM Agent 实现图片抽取逻辑",
+      "description": "作为 PM，我需要从用户输入中抽取图片资产（本地文件、网络图、毛坯 PPT）。",
+      "acceptanceCriteria": [
+        "实现 PMAgent.extract_images_from_input() 方法",
+        "支持从本地路径列表抽取图片",
+        "支持从 URL 列表下载图片",
+        "支持从毛坯 PPTX 中提取图片（调用现有 TemplateAgent）",
+        "抽取后自动调用轻量读图",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "PM Agent 实现用户意图整理",
+      "description": "作为 PM，我需要将用户原始输入整理为结构化的任务约束。",
+      "acceptanceCriteria": [
+        "实现 PMAgent.organize_user_intent() 方法",
+        "识别输入类型（主题/文章/大纲/毛坯PPT/补图/改单页）",
+        "提取目标受众、语气、关键限制",
+        "提取图片位置意图（语义锚点）",
+        "更新 brief 文件",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "实现 content_plan.md 到 content_plan.json 的编译器",
+      "description": "作为系统，我需要将用户确认的 content_plan.md 编译为机器可执行的 content_plan.json。",
+      "acceptanceCriteria": [
+        "在 utils/ 下创建 compile_content_plan.py",
+        "实现 compile_content_plan() 函数",
+        "解析 Markdown 结构（标题层级、内容段落、图片锚点）",
+        "生成 JSON 包含：slides 数组，每个 slide 有 type, title, content, image_anchors",
+        "保留语义锚点信息",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-009",
+      "title": "升级 NarrativeAgent 输出 content_plan.md",
+      "description": "作为叙事总监，我需要生成包含图片语义锚点的 content_plan.md。",
+      "acceptanceCriteria": [
+        "修改 agents/narrative.py 的输出格式",
+        "在每个内容段落后添加图片锚点标记（如 `[IMAGE: 客户案例章节]`）",
+        "根据 brief 中的图片位置意图分配锚点",
+        "生成后自动调用 compile_content_plan() 生成 JSON",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "实现文档规范化工具",
+      "description": "作为系统，我需要在用户修改 Markdown 后自动规整格式。",
+      "acceptanceCriteria": [
+        "在 utils/ 下创建 doc_normalizer.py",
+        "实现 normalize_content_plan() 函数",
+        "修复常见格式问题（空格、换行、标点）",
+        "检测并报告无法自动修复的问题（路径缺失、字段非法）",
+        "返回 (normalized_content, issues) 元组",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-011",
+      "title": "实现 visual_plan.md 的半结构化图片块格式",
+      "description": "作为系统，我需要定义 visual_plan.md 中图片块的标准格式。",
+      "acceptanceCriteria": [
+        "定义图片块格式：包含 path, mode, role, position 字段",
+        "在 utils/doc_normalizer.py 中实现图片块解析函数",
+        "支持一页多图的表示",
+        "支持待补图占位的表示",
+        "Typecheck passes"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-012",
+      "title": "升级 VisualAgent 输出 visual_plan.md",
+      "description": "作为视觉总监，我需要生成包含半结构化图片块的 visual_plan.md。",
+      "acceptanceCriteria": [
+        "修改 agents/visual.py 的输出格式",
+        "根据 image_assets.json 和语义锚点分配图片到页面",
+        "为每张图生成图片块（包含 mode, role, position）",
+        "推荐图片模式（但不违背用户明确要求）",
+        "支持一页多图的排版建议",
+        "Typecheck passes"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-013",
+      "title": "实现 visual_plan.md 到 visual_plan.json 的编译器",
+      "description": "作为系统，我需要将 visual_plan.md 扩展为执行所需的 visual_plan.json。",
+      "acceptanceCriteria": [
+        "在 utils/ 下创建 compile_visual_plan.py",
+        "实现 compile_visual_plan() 函数",
+        "解析图片块，生成完整的 visual_prompt",
+        "根据图片模式生成不同的 prompt 策略",
+        "保留语义锚点和所有元数据",
+        "Typecheck passes"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-014",
+      "title": "实现资源完整性检查工具",
+      "description": "作为系统，我需要在执行前检查所有资源是否完整。",
+      "acceptanceCriteria": [
+        "在 utils/ 下创建 resource_check.py",
+        "实现 check_resources() 函数",
+        "检查图片路径是否存在",
+        "检查待补图是否已处理",
+        "检查必填字段是否完整",
+        "检查 brief/content_plan/visual_plan 是否一致",
+        "返回详细的检查报告",
+        "Typecheck passes"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-015",
+      "title": "将 Reviewer 降级为工具函数",
+      "description": "作为系统，我需要将 Reviewer 从 Agent 降级为工具能力。",
+      "acceptanceCriteria": [
+        "在 utils/ 下创建 prompt_guard.py",
+        "将 agents/reviewer.py 的核心逻辑迁移为工具函数",
+        "实现 review_visual_plan() 函数（找问题、给建议）",
+        "实现分层审查策略（全量轻检查、种子页深查、异常页必查）",
+        "返回问题列表和补丁建议",
+        "Typecheck passes"
+      ],
+      "priority": 15,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-016",
+      "title": "PM Agent 实现最终意图审查",
+      "description": "作为 PM，我需要在执行前做最终意图一致性审查。",
+      "acceptanceCriteria": [
+        "实现 PMAgent.final_intent_review() 方法",
+        "调用 resource_check 检查资源完整性",
+        "调用 prompt_guard 检查 prompt 质量",
+        "对比 brief 和 visual_plan 的一致性",
+        "生成审查报告",
+        "Typecheck passes"
+      ],
+      "priority": 16,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-017",
+      "title": "升级 executor 支持新的 visual_plan.json 格式",
+      "description": "作为执行层，我需要支持新的 visual_plan.json 格式（包含图片模式和语义锚点）。",
+      "acceptanceCriteria": [
+        "修改 core/executor.py 的 execute_plan() 函数",
+        "读取 visual_plan.json 而不是直接解析 Markdown",
+        "根据图片模式调整生成策略",
+        "支持一页多图的并行生成",
+        "保留现有的 seed-then-parallel 逻辑",
+        "Typecheck passes"
+      ],
+      "priority": 17,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-018",
+      "title": "升级 generator 支持三种图片模式",
+      "description": "作为图片生成器，我需要根据图片模式采用不同的生成策略。",
+      "acceptanceCriteria": [
+        "修改 core/generator.py 的 generate_slide_image() 方法",
+        "意向融合模式：只取语义，不保留可识别性",
+        "元素保留模式：保留主体，允许重组",
+        "原图呈现模式：保留长宽比，轻微加工",
+        "根据模式调整 reference_images 的使用方式",
+        "Typecheck passes"
+      ],
+      "priority": 18,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-019",
+      "title": "移除 overlay 相关代码",
+      "description": "作为开发者，我需要彻底移除已废弃的 overlay 路线代码。",
+      "acceptanceCriteria": [
+        "搜索代码库中所有 overlay 相关代码",
+        "移除 overlay 模式的枚举值",
+        "移除 overlay 相关的处理逻辑",
+        "更新相关文档和注释",
+        "Typecheck passes"
+      ],
+      "priority": 19,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-020",
+      "title": "实现局部修改的回退判断逻辑",
+      "description": "作为 PM，我需要判断用户的修改应该回退到哪个 Gate。",
+      "acceptanceCriteria": [
+        "实现 PMAgent.analyze_modification() 方法",
+        "检测修改类型（内容/视觉/结构/图片归属）",
+        "判断应回退到哪个 Gate（Content/Visual/Execute）",
+        "判断是否可以只改单页",
+        "返回回退建议和影响范围",
+        "Typecheck passes"
+      ],
+      "priority": 20,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-021",
+      "title": "实现计划文件的同步回写",
+      "description": "作为系统，我需要在局部修改生效后同步回写计划文件。",
+      "acceptanceCriteria": [
+        "在 utils/ 下创建 plan_sync.py",
+        "实现 sync_content_plan() 函数",
+        "实现 sync_visual_plan() 函数",
+        "确保 Markdown 和 JSON 保持一致",
+        "记录修改历史",
+        "Typecheck passes"
+      ],
+      "priority": 21,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-022",
+      "title": "实现执行失败的分类处理",
+      "description": "作为系统，我需要对执行失败进行分类并采取不同的处理策略。",
+      "acceptanceCriteria": [
+        "在 core/executor.py 中实现 classify_failure() 函数",
+        "区分失败类型（素材/生成/计划/组装）",
+        "对暂时性失败自动重试（有次数限制）",
+        "对永久性失败报告用户",
+        "生成详细的失败报告（定位到页/图/文件/阶段）",
+        "Typecheck passes"
+      ],
+      "priority": 22,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-023",
+      "title": "升级 main.py 集成 PM Agent",
+      "description": "作为 CLI，我需要将 PM Agent 集成到主流程中。",
+      "acceptanceCriteria": [
+        "修改 main.py，在所有命令前先调用 PM intake",
+        "PM 负责维护 brief 和 image_assets",
+        "PM 负责判断当前 Gate 和回退逻辑",
+        "PM 负责执行前的最终审查",
+        "保留现有的命令行接口",
+        "Typecheck passes"
+      ],
+      "priority": 23,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-024",
+      "title": "添加 Gate 之间的规范化检查",
+      "description": "作为系统，我需要在进入下一个 Gate 前自动规范化文档。",
+      "acceptanceCriteria": [
+        "在 main.py 的 Gate 转换处添加规范化调用",
+        "调用 doc_normalizer 检查和修复格式",
+        "如果无法自动修复，停下来提示用户",
+        "轻量告知用户已规整",
+        "Typecheck passes"
+      ],
+      "priority": 24,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-025",
+      "title": "更新文档和示例",
+      "description": "作为开发者，我需要更新文档以反映新的架构。",
+      "acceptanceCriteria": [
+        "更新 CLAUDE.md 描述新的工作流",
+        "更新 README.md 添加 v4 架构说明",
+        "创建示例 brief.md",
+        "创建示例 image_assets.json",
+        "更新 CLI 命令说明",
+        "Typecheck passes"
+      ],
+      "priority": 25,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-026",
+      "title": "添加集成测试",
+      "description": "作为开发者，我需要添加端到端的集成测试。",
+      "acceptanceCriteria": [
+        "在 tests/ 下创建 test_v4_workflow.py",
+        "测试完整的 PM intake -> Content -> Visual -> Execute 流程",
+        "测试图片抽取和轻量读图",
+        "测试文档编译和规范化",
+        "测试局部修改和回退逻辑",
+        "测试资源完整性检查",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 26,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}

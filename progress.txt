@@ -1,0 +1,25 @@
+# Ralph Progress Log
+Started: 2026年 4月11日 星期六 21时41分46秒 CST
+---
+
+## 2026-04-11 21:50 - US-001
+- 实现了图片模式枚举和基础数据结构
+- 文件变更：创建 utils/image_assets.py
+- **Learnings for future iterations:**
+  - 项目使用 dataclass 和 Enum 来定义数据结构
+  - 图片资产管理采用 Manager 模式，集中管理所有图片资源
+  - 代码需要支持序列化（to_dict/from_dict）以便持久化
+  - 项目没有配置 mypy，使用 py_compile 和导入测试来验证代码正确性
+---
+
+## 2026-04-11 22:00 - US-002
+- 实现了轻量读图功能
+- 文件变更：修改 utils/image_assets.py
+- **Learnings for future iterations:**
+  - ImageAssetsManager 需要接收 client 参数才能调用 VLM
+  - 轻量读图使用 gemini-2.5-flash 模型，与 image_selector.py 保持一致
+  - 图片编码方式：缩放到 512x512，JPEG 格式，base64 编码
+  - VLM 调用格式：messages 中使用 image_url 类型，URL 格式为 data:image/jpeg;base64,{img_b64}
+  - 返回结果需要提取 JSON（去除可能的 markdown 包裹）
+  - 轻量读图结果自动更新到对应的 ImageAsset 对象
+---
