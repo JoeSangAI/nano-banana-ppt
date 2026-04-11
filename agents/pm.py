@@ -591,3 +591,159 @@ class PMAgent:
                 issues.append(f"Brief 中的风格偏好「{brief.style_preference}」未在 visual_plan 的 prompt 中体现")
 
         return issues
+
+    def analyze_modification(self, modification_request: str, target_pages: Optional[List[int]] = None) -> Dict[str, Any]:
+        """
+        分析用户的修改请求，判断应该回退到哪个 Gate
+
+        Args:
+            modification_request: 用户的修改请求文本
+            target_pages: 目标页面编号列表（如果用户指定了具体页面）
+
+        Returns:
+            分析结果，包含：
+            - modification_type: 修改类型（content/visual/structure/image_assignment）
+            - rollback_to_gate: 应回退到的 Gate（Content/Visual/Execute）
+            - can_modify_single_page: 是否可以只修改单页
+            - affected_pages: 受影响的页面编号列表
+            - reason: 判断理由
+            - suggestions: 操作建议
+        """
+        import json
+
+        logger.info("🔍 分析修改请求")
+
+        result = {
+            "modification_type": None,
+            "rollback_to_gate": None,
+            "can_modify_single_page": False,
+            "affected_pages": target_pages or [],
+            "reason": "",
+            "suggestions": []
+        }
+
+        # 构建分析 prompt
+        prompt = f"""你是一个专业的产品经理，需要分析用户的修改请求，判断应该回退到哪个处理阶段。
+
+系统有三个处理阶段（Gate）：
+1. Content Gate: 内容规划阶段，生成 content_plan（页面结构、标题、文本内容）
+2. Visual Gate: 视觉规划阶段，生成 visual_plan（图片选择、位置、视觉 prompt）
+3. Execute Gate: 执行阶段，生成最终的 PPT 文件
+
+用户修改请求：
+{modification_request}
+
+{"用户指定的目标页面: " + str(target_pages) if target_pages else "用户未指定具体页面"}
+
+请分析这个修改请求，返回 JSON 格式的分析结果：
+
+{{
+  "modification_type": "修改类型，从以下选项中选择一个：content（内容修改）/ visual（视觉修改）/ structure（结构修改）/ image_assignment（图片归属修改）",
+  "rollback_to_gate": "应回退到的 Gate，从以下选项中选择一个：Content / Visual / Execute",
+  "can_modify_single_page": true/false,
+  "reason": "判断理由（一句话说明为什么要回退到这个 Gate）",
+  "suggestions": ["操作建议1", "操作建议2"]
+}}
+
+判断规则：
+1. 修改类型判断：
+   - content: 修改文字内容、标题、页面数量、页面顺序
+   - visual: 修改图片选择、图片位置、视觉风格、prompt
+   - structure: 修改整体结构、增删页面、重新组织内容
+   - image_assignment: 修改图片与页面的对应关系、图片语义锚点
+
+2. Gate 回退判断：
+   - 回退到 Content: 如果修改涉及内容结构、页面数量、文字内容
+   - 回退到 Visual: 如果修改只涉及图片选择、位置、视觉效果
+   - 回退到 Execute: 如果修改只涉及 PPT 生成参数、格式调整
+
+3. 单页修改判断：
+   - 可以单页修改: 修改只影响特定页面的视觉效果或文字内容，不影响其他页面
+   - 不能单页修改: 修改涉及整体结构、页面顺序、或影响多个页面的一致性
+
+只返回 JSON，不要有其他内容。"""
+
+        try:
+            # 调用 LLM 分析
+            response = self.client.chat.completions.create(
+                model="gemini-2.0-flash-exp",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+            )
+
+            result_text = response.choices[0].message.content.strip()
+
+            # 提取 JSON
+            if result_text.startswith("```"):
+                result_text = result_text.split("```")[1]
+                if result_text.startswith("json"):
+                    result_text = result_text[4:]
+            result_text = result_text.strip()
+
+            analysis = json.loads(result_text)
+
+            # 更新结果
+            result["modification_type"] = analysis.get("modification_type")
+            result["rollback_to_gate"] = analysis.get("rollback_to_gate")
+            result["can_modify_single_page"] = analysis.get("can_modify_single_page", False)
+            result["reason"] = analysis.get("reason", "")
+            result["suggestions"] = analysis.get("suggestions", [])
+
+            # 如果用户指定了页面，且判断可以单页修改，则只影响指定页面
+            if target_pages and result["can_modify_single_page"]:
+                result["affected_pages"] = target_pages
+            else:
+                # 否则影响所有页面
+                result["affected_pages"] = self._get_all_page_numbers()
+
+            logger.info(f"✅ 修改分析完成: {result['modification_type']} -> {result['rollback_to_gate']}")
+            logger.info(f"   理由: {result['reason']}")
+            logger.info(f"   单页修改: {result['can_modify_single_page']}")
+            logger.info(f"   受影响页面: {result['affected_pages']}")
+
+            return result
+
+        except Exception as e:
+            logger.error(f"修改分析失败: {e}")
+            # 返回保守的默认值
+            result["modification_type"] = "unknown"
+            result["rollback_to_gate"] = "Content"
+            result["can_modify_single_page"] = False
+            result["reason"] = f"分析失败，保守起见回退到 Content Gate: {e}"
+            result["suggestions"] = ["建议手动检查修改范围"]
+            result["affected_pages"] = self._get_all_page_numbers()
+            return result
+
+    def _get_all_page_numbers(self) -> List[int]:
+        """
+        获取所有页面编号
+
+        Returns:
+            页面编号列表
+        """
+        import json
+
+        # 尝试从 content_plan.json 获取
+        content_plan_json = self.project_dir / "content_plan.json"
+        if content_plan_json.exists():
+            try:
+                with open(content_plan_json, 'r', encoding='utf-8') as f:
+                    content_plan = json.load(f)
+                    slides = content_plan.get("slides", [])
+                    return [slide.get("slide_number", i + 1) for i, slide in enumerate(slides)]
+            except Exception:
+                pass
+
+        # 尝试从 visual_plan.json 获取
+        visual_plan_json = self.project_dir / "visual_plan.json"
+        if visual_plan_json.exists():
+            try:
+                with open(visual_plan_json, 'r', encoding='utf-8') as f:
+                    visual_plan = json.load(f)
+                    pages = visual_plan.get("pages", [])
+                    return [page.get("page_number", i + 1) for i, page in enumerate(pages)]
+            except Exception:
+                pass
+
+        # 默认返回空列表
+        return []

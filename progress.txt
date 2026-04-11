@@ -260,3 +260,19 @@ Started: 2026年 4月11日 星期六 21时41分46秒 CST
   - ORIGINAL_PRESENT 最严格（保留一切），INTENT_FUSION 最自由（只取灵感）
   - 这个实现与 US-017 中 executor 设置的 blend_reserved_region 配合工作
 ---
+
+## 2026-04-11 - US-019: 移除 overlay 相关代码
+
+**目标**: 统一使用 blend 模式，移除所有 overlay 相关代码
+
+**实现**:
+- 移除 utils/bbox.py 中的 _lock_overlay_bbox 函数
+- 移除 core/generator.py 中的 _merge_native_images_with_locked_regions 函数和 overlay 相关逻辑
+- 移除 core/image_selector.py 中的 overlay 评分字段和相关 prompt
+- 更新 utils/review_plan.py 将所有 overlay 默认值改为 blend，兼容旧格式
+- 删除 tests/test_mixed_layout_locking.py 测试文件
+- 更新 tests/test_image_selector_logic.py 移除 overlay 评分字段
+
+**测试**: 所有测试通过 (5 passed)
+
+**提交**: c22d735 - feat: US-019 - 移除 overlay 相关代码
