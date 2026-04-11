@@ -7,6 +7,7 @@ import os
 import sys
 import json
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 from pathlib import Path
@@ -16,6 +17,9 @@ from PIL import Image
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..')))
 from tools.nano_banana_ppt.core.generator import PPTGenerator, _fix_black_corners
 from tools.nano_banana_ppt.core.data_visualizer import render_chart_image
+from tools.nano_banana_ppt.core.failure_classifier import (
+    classify_failure, generate_failure_summary, FailureReport, FailureType, FailureSeverity
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -191,26 +195,34 @@ def _position_to_bounding_box(position: str) -> Dict[str, float]:
     return position_map.get(position, position_map["center"])
 
 
-def _generate_single_slide(slide, visual_plan, slides_dir, generator, resolution, masters, clean_background_image=None, project_dir=None):
+def _generate_single_slide(slide, visual_plan, slides_dir, generator, resolution, masters, clean_background_image=None, project_dir=None, retry_count=0):
     """
     单页生成逻辑，供串行或并行调用
     masters: dict {'content': img, 'section': img, 'hero': img}
     project_dir: 项目工作目录，用于解析相对路径
+    retry_count: 当前重试次数
     """
+    page_num = slide['page_num']
+
     # Check for table data first
     table_data = slide.get('table_data') or slide.get('text_content', {}).get('table_data')
     visualization = slide.get('visualization', '')
-    
+
     if table_data and visualization in ('bar', 'line', 'pie'):
         try:
             bg_img = clean_background_image if clean_background_image else None
             image = render_chart_image(table_data, visualization, slide.get('style_config', {}), background_image=bg_img)
-            page_num = slide['page_num']
             slide_path = slides_dir / f"slide_{page_num:02d}.png"
             image.save(slide_path, "PNG")
             return page_num, image
         except Exception as e:
-            logger.error(f"Failed to render chart for slide {slide.get('page_num')}: {e}")
+            logger.error(f"Failed to render chart for slide {page_num}: {e}")
+            # 分类失败
+            failure = classify_failure(e, {
+                "page_number": page_num,
+                "stage": "chart_rendering",
+                "retry_count": retry_count
+            })
             raise e
 
     prompt = slide['visual_prompt']
@@ -223,7 +235,7 @@ def _generate_single_slide(slide, visual_plan, slides_dir, generator, resolution
             ref_imgs_paths.extend(slide['reference_image'])
         else:
             ref_imgs_paths.append(slide['reference_image'])
-            
+
     for ref_path in ref_imgs_paths:
         if ref_path and os.path.exists(ref_path):
             try:
@@ -231,6 +243,16 @@ def _generate_single_slide(slide, visual_plan, slides_dir, generator, resolution
                 reference_images.append(ref_img)
             except Exception as e:
                 logger.warning(f"无法加载参考图 {ref_path}: {e}")
+                # 分类素材失败
+                failure = classify_failure(e, {
+                    "page_number": page_num,
+                    "image_path": ref_path,
+                    "stage": "load_reference",
+                    "retry_count": retry_count
+                })
+                if failure.severity == FailureSeverity.PERMANENT:
+                    logger.error(f"素材错误（不可重试）: {failure.error_message}")
+                    raise e
 
     # 2. 如果没有模版参考图，尝试使用同类型的母版 (AI Minting Consistency)
     # framework/flowchart/comparison/data/toc/breathing 均属于「内容信息页」，
@@ -284,12 +306,22 @@ def _generate_single_slide(slide, visual_plan, slides_dir, generator, resolution
             if bi_img.mode != "RGB":
                 bi_img = bi_img.convert("RGB")
             reference_images.append(bi_img)
-            
+
             # 为重绘设定极强的 Prompt
             role = bi.get('semantic_role', 'subject')
             prompt += f"\n\nCRITICAL INSTRUCTION: We are REDRAWING the provided reference image ({role}). Do NOT just paste it. Seamlessly blend and redraw its essence, data structure, or subject into the background with high-end 3D/UI aesthetics. Ensure perfect color grading and lighting match. Do NOT duplicate or repeat the text/content from the reference image multiple times."
         except Exception as e:
             logger.warning(f"无法加载融合参考图 {bi['path']}: {e}")
+            # 分类素材失败
+            failure = classify_failure(e, {
+                "page_number": page_num,
+                "image_path": bi['path'],
+                "stage": "load_blend_image",
+                "retry_count": retry_count
+            })
+            if failure.severity == FailureSeverity.PERMANENT:
+                logger.error(f"素材错误（不可重试）: {failure.error_message}")
+                raise e
     
     image = generator.generate_image(
         prompt, aspect_ratio="16:9",
@@ -298,7 +330,6 @@ def _generate_single_slide(slide, visual_plan, slides_dir, generator, resolution
         resolution=resolution,
         native_images=blend_images # 传给 generator 以便生成带有排版意识的 prompt (例如留出左侧空间给重绘)
     )
-    page_num = slide['page_num']
     slide_path = slides_dir / f"slide_{page_num:02d}.png"
     image.save(slide_path, "PNG")
     return page_num, image
@@ -471,31 +502,61 @@ def execute_plan(plan_file: str, output_name: str = "Final_Presentation",
     if seed_indices:
         print(f"\n🌱 正在生成风格种子页 (共 {len(seed_indices)} 页)...")
         indices_to_remove = []
-        
+
         for p_type, idx in seed_indices:
             slide = to_run[idx]
             print(f"  > [{p_type.upper()}] Generating Page {slide['page_num']}...")
-            try:
-                # Pass current masters state (some might be None, that's expected for seeds)
-                _, img = _generate_single_slide(
-                    slide, visual_plan, slides_dir, generator, resolution, masters, clean_background_image, project_dir=str(proj)
-                )
-                images_dict[slide['page_num']] = img
-                
-                # Register as master/background
-                if p_type == 'background':
-                    clean_background_image = img
-                    print("    -> 已设定为纯净背景")
-                else:
-                    masters[p_type] = img
-                    print(f"    -> 已设定为 {p_type} 母版")
-                
-                indices_to_remove.append(idx)
-                
-            except Exception as e:
-                logger.error(f"种子页生成失败: {e}")
+
+            # 种子页重试逻辑
+            max_seed_retries = 3
+            success = False
+
+            for attempt in range(max_seed_retries):
+                try:
+                    # Pass current masters state (some might be None, that's expected for seeds)
+                    _, img = _generate_single_slide(
+                        slide, visual_plan, slides_dir, generator, resolution, masters,
+                        clean_background_image, project_dir=str(proj), retry_count=attempt
+                    )
+                    images_dict[slide['page_num']] = img
+
+                    # Register as master/background
+                    if p_type == 'background':
+                        clean_background_image = img
+                        print("    -> 已设定为纯净背景")
+                    else:
+                        masters[p_type] = img
+                        print(f"    -> 已设定为 {p_type} 母版")
+
+                    indices_to_remove.append(idx)
+                    success = True
+                    break
+
+                except Exception as e:
+                    # 分类失败
+                    failure = classify_failure(e, {
+                        "page_number": slide['page_num'],
+                        "stage": "seed",
+                        "retry_count": attempt
+                    })
+
+                    logger.warning(f"种子页生成失败 (尝试 {attempt+1}/{max_seed_retries}): {failure.error_message}")
+
+                    # 如果是永久性失败，不再重试
+                    if failure.severity == FailureSeverity.PERMANENT:
+                        logger.error(f"种子页永久性失败，停止重试: {failure.error_message}")
+                        break
+
+                    # 暂时性失败，等待后重试
+                    if attempt < max_seed_retries - 1:
+                        wait_time = 5 * (attempt + 1)  # 递增等待时间
+                        logger.info(f"等待 {wait_time} 秒后重试...")
+                        time.sleep(wait_time)
+
+            if not success:
+                logger.error(f"种子页 {slide['page_num']} 最终失败，使用灰色占位图")
                 images_dict[slide['page_num']] = Image.new('RGB', (1920, 1080), color='gray')
-                indices_to_remove.append(idx) # Still remove to avoid infinite loop or errors
+                indices_to_remove.append(idx)
 
         # Remove processed seeds from to_run (in reverse order to preserve indices)
         # BUG FIX: Popping from to_run modifies it while we still need to process remaining items.
@@ -503,20 +564,47 @@ def execute_plan(plan_file: str, output_name: str = "Final_Presentation",
         to_run = [s for i, s in enumerate(to_run) if i not in indices_to_remove]
 
     # Phase 2: 并行生成剩余页
+    failures_list: List[FailureReport] = []  # 收集所有失败报告
+
     def run_one(s):
         pn = s['page_num']
-        # Try up to 2 times at the executor level (in addition to generator retries)
-        max_exec_attempts = 2
+        # Try up to 3 times at the executor level (in addition to generator retries)
+        max_exec_attempts = 3
+        last_failure = None
+
         for attempt in range(max_exec_attempts):
             try:
-                return _generate_single_slide(s, visual_plan, slides_dir, generator, resolution, masters, clean_background_image, project_dir=str(proj))
+                return _generate_single_slide(
+                    s, visual_plan, slides_dir, generator, resolution, masters,
+                    clean_background_image, project_dir=str(proj), retry_count=attempt
+                )
             except Exception as e:
-                logger.warning(f"Page {pn} Executor attempt {attempt+1}/{max_exec_attempts} failed: {e}")
-                if attempt < max_exec_attempts - 1:
-                    import time
-                    time.sleep(5)  # Wait 5 seconds before executor-level retry
-        
-        logger.error(f"Page {pn} FINAL FAILURE after {max_exec_attempts} attempts.")
+                # 分类失败
+                failure = classify_failure(e, {
+                    "page_number": pn,
+                    "stage": "parallel",
+                    "retry_count": attempt
+                })
+                last_failure = failure
+
+                logger.warning(f"Page {pn} 尝试 {attempt+1}/{max_exec_attempts} 失败: {failure.error_message}")
+
+                # 如果是永久性失败，不再重试
+                if failure.severity == FailureSeverity.PERMANENT:
+                    logger.error(f"Page {pn} 永久性失败，停止重试")
+                    break
+
+                # 暂时性失败，等待后重试
+                if attempt < max_exec_attempts - 1 and failure.can_retry:
+                    wait_time = 5 * (attempt + 1)
+                    logger.info(f"等待 {wait_time} 秒后重试...")
+                    time.sleep(wait_time)
+
+        # 所有重试都失败了
+        if last_failure:
+            failures_list.append(last_failure)
+            logger.error(f"Page {pn} 最终失败: {last_failure.error_message}")
+
         # Return gray placeholder only after all retries fail
         return pn, Image.new('RGB', (1920, 1080), color='gray')
 
@@ -533,18 +621,37 @@ def execute_plan(plan_file: str, output_name: str = "Final_Presentation",
                 except Exception as e:
                     logger.error(f"Page {s['page_num']} 异常: {e}")
 
+    # 打印失败摘要
+    if failures_list:
+        summary = generate_failure_summary(failures_list)
+        print(summary)
+        logger.warning(f"生成过程中有 {len(failures_list)} 个失败，详见上方摘要")
+
     # Get the project name, output name usually already has the date prefix
     # If output_name starts with the date prefix, don't add it again
     date_prefix = date.today().strftime("%Y%m%d")
-    
+
     final_output_name = output_name
     if not final_output_name.startswith(f"{date_prefix}_"):
         final_output_name = f"{date_prefix}_{output_name}"
-        
-    output_path = proj / f"{final_output_name}.pptx"
-    generator.create_advanced_pptx(visual_plan, images_dict, str(output_path), template_path, project_dir=str(proj))
 
-    print(f"\n✅ PPT 生成完成: {output_path}")
+    output_path = proj / f"{final_output_name}.pptx"
+
+    # 组装 PPTX
+    try:
+        generator.create_advanced_pptx(visual_plan, images_dict, str(output_path), template_path, project_dir=str(proj))
+        print(f"\n✅ PPT 生成完成: {output_path}")
+    except Exception as e:
+        # 分类组装失败
+        failure = classify_failure(e, {
+            "file_path": str(output_path),
+            "stage": "assembly"
+        })
+        logger.error(f"PPT 组装失败: {failure.error_message}")
+        failures_list.append(failure)
+        print(f"\n❌ PPT 组装失败: {failure.error_message}")
+        return None
+
     return str(output_path)
 
 
