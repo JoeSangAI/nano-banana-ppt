@@ -142,7 +142,43 @@ class PPTGenerator:
 
             if blend_areas:
                 areas_str = " and ".join(blend_areas)
-                tech_suffix += f" CRITICAL INSTRUCTION: This image must contain ALL of the provided reference images (the ones in this prompt). Each reference image is a REAL PHOTOGRAPH that must appear COMPLETELY and UNCHANGED in the final output - do NOT modify, crop, redraw, distort, or alter any reference image. Keep their original content, colors, people, objects, text, and spatial composition exactly as-is. The reference images are the CONTENT of this slide - you are only generating the background environment around them. If a reference image shows a person, product, or scene, that exact person/product/scene must appear unchanged in your output."
+                # 根据图片模式生成不同的融合策略
+                blend_instructions = []
+                for img_conf in native_images:
+                    if img_conf.get('integration_mode', 'overlay') != 'blend':
+                        continue
+                    mode = img_conf.get('mode', 'INTENT_FUSION')
+
+                    if mode == 'ORIGINAL_PRESENT':
+                        # 原图呈现：保留长宽比，轻微加工
+                        blend_instructions.append(
+                            "ORIGINAL_PRESENT mode: The reference image must appear EXACTLY as-is with NO modifications. "
+                            "Preserve its original aspect ratio, content, colors, people, objects, text, and spatial composition pixel-perfectly. "
+                            "You may ONLY add subtle lighting adjustments or soft shadows to help it blend naturally with the background. "
+                            "Do NOT crop, redraw, distort, recompose, or alter the reference image in any way."
+                        )
+                    elif mode == 'ELEMENT_PRESERVE':
+                        # 元素保留：保留主体，允许重组
+                        blend_instructions.append(
+                            "ELEMENT_PRESERVE mode: Preserve the MAIN SUBJECT/ELEMENT from the reference image (people, products, key objects) "
+                            "but you may recompose the background, adjust lighting, change the environment, or reorganize secondary elements. "
+                            "The recognizable main subject must remain intact and identifiable, but you have creative freedom with everything else. "
+                            "You may adjust colors, add effects, or change the context while keeping the core element clear."
+                        )
+                    else:  # INTENT_FUSION (default)
+                        # 意向融合：只取语义，不保留可识别性
+                        blend_instructions.append(
+                            "INTENT_FUSION mode: Use the reference image ONLY for semantic inspiration and conceptual direction. "
+                            "You should capture the MOOD, THEME, and GENERAL CONCEPT, but completely recreate the visual from scratch. "
+                            "Do NOT preserve recognizable elements, specific objects, or identifiable features. "
+                            "Think of the reference as a creative brief - understand its essence and generate something new that captures the same feeling."
+                        )
+
+                if blend_instructions:
+                    tech_suffix += f" CRITICAL INSTRUCTION for reference images in {areas_str}: " + " ".join(blend_instructions)
+                else:
+                    # Fallback to old behavior if no mode specified
+                    tech_suffix += f" CRITICAL INSTRUCTION: This image must contain ALL of the provided reference images (the ones in this prompt). Each reference image is a REAL PHOTOGRAPH that must appear COMPLETELY and UNCHANGED in the final output - do NOT modify, crop, redraw, distort, or alter any reference image. Keep their original content, colors, people, objects, text, and spatial composition exactly as-is. The reference images are the CONTENT of this slide - you are only generating the background environment around them. If a reference image shows a person, product, or scene, that exact person/product/scene must appear unchanged in your output."
             elif native_images and len(native_images) > 0:
                 # 有原生图片但没有明确位置时，让 AI 根据图片内容自动决定最佳位置
                 num_imgs = len(native_images)
