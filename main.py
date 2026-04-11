@@ -83,6 +83,7 @@ _find_and_load_env()
 from tools.nano_banana_ppt.agents.narrative import NarrativeAgent
 from tools.nano_banana_ppt.agents.visual import VisualAgent
 from tools.nano_banana_ppt.agents.template import TemplateAgent
+from tools.nano_banana_ppt.agents.pm import PMAgent
 from tools.nano_banana_ppt.core.executor import execute_plan
 from tools.nano_banana_ppt.utils.llm_client import reset_session
 from tools.nano_banana_ppt.utils.review_plan import (
@@ -181,6 +182,25 @@ def generate_content_plan(content_file: str, template_file: str = None,
     if not api_key:
         print("❌ 错误: 请设置 OPENAI_API_KEY 或 GOOGLE_API_KEY 环境变量")
         return None
+
+    # 初始化 PM Agent
+    from openai import OpenAI
+    client = OpenAI(api_key=api_key, base_url=api_base)
+    pm_agent = PMAgent(client, project_dir=str(project_dir))
+
+    # PM Intake: 接收用户输入
+    print("\n📥 PM Agent 正在处理输入...")
+    user_input = {
+        "text": briefing or f"根据内容文件生成 PPT: {content_file}",
+        "images": [],
+        "urls": [],
+        "template_pptx": template_file if template_file and template_file.endswith('.pptx') else None,
+    }
+    pm_result = pm_agent.intake(user_input)
+    if pm_result["status"] != "success":
+        print(f"❌ PM Agent 处理失败: {pm_result['message']}")
+        return None
+    print(f"✅ PM Agent 处理完成，建议进入 {pm_result['next_gate']} 阶段")
 
     narrative_agent = NarrativeAgent(api_key, api_base, project_dir=str(project_dir))
     template_agent = TemplateAgent(api_key, api_base, output_dir=str(tpl_assets_dir))
@@ -349,6 +369,20 @@ def generate_visual_plan(plan_dir: str, style_preference: str = None):
     project_dir = Path(plan_dir)
     state_file = project_dir / "_content_state.json"
     review_md_path = project_dir / REVIEW_MD_FILENAME  # master_plan.md
+
+    # 初始化 PM Agent（用于判断 Gate）
+    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    api_base = os.getenv("OPENAI_API_BASE") or "https://generativelanguage.googleapis.com/v1beta/openai"
+    if api_key:
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key, base_url=api_base)
+        pm_agent = PMAgent(client, project_dir=str(project_dir))
+        current_gate = pm_agent.determine_gate()
+        print(f"📍 当前 Gate: {current_gate}")
+        if current_gate != "Visual" and current_gate != "Content":
+            print(f"⚠️  警告: 当前应该在 {current_gate} 阶段，但您正在执行 Visual 阶段")
+    else:
+        pm_agent = None
 
     # 如果 _content_state.json 不存在，尝试从 content_plan.md 重建
     if not state_file.exists():
@@ -716,6 +750,23 @@ def execute_from_plan(plan_input: str, output_name: str = None, resolution: str 
     plan_path, proj_dir, from_review = _resolve_execute_input(plan_input)
     if not plan_path:
         return None
+
+    # 初始化 PM Agent（用于最终审查）
+    pm_agent = None
+    if api_key and not reassemble_only:
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key, base_url=api_base)
+        pm_agent = PMAgent(client, project_dir=proj_dir)
+
+        # PM 最终意图审查
+        if not force:
+            print("\n🔍 PM Agent 正在执行最终意图审查...")
+            review_report = pm_agent.final_intent_review()
+            if not review_report["passed"]:
+                print(f"\n❌ 最终审查未通过，发现 {review_report['summary']['blocking_issues']} 个阻塞问题")
+                print("   请修复问题后再执行，或使用 --force 跳过审查")
+                return None
+            print("✅ 最终审查通过，可以执行")
 
     # GATE 2: 在非交互模式下，如果没有通过确认流程，则阻止直接执行
     if from_review and not sys.stdin.isatty() and not force:
