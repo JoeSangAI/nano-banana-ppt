@@ -208,3 +208,19 @@ Started: 2026年 4月11日 星期六 21时41分46秒 CST
   - 计算 prompt 差异比例（diff_ratio），超过 30% 差异时记录为 info 级别问题
   - 提供 print_review_report() 函数，友好地打印审查报告
 ---
+
+## 2026-04-11 23:59 - US-016
+- 实现了 PM Agent 的最终意图审查功能
+- 文件变更：修改 agents/pm.py
+- **Learnings for future iterations:**
+  - 实现了 final_intent_review() 方法，整合三层审查：资源完整性、Prompt 质量、Brief 一致性
+  - 资源完整性检查：调用 resource_check.check_resources()，检查文件存在性、图片路径、待补图、必填字段
+  - Prompt 质量审查：调用 prompt_guard.review_visual_plan()，使用 auto 策略（轻检查 + 种子页深查 + 异常页必查）
+  - Brief 一致性检查：实现 _check_brief_visual_consistency() 方法，对比 Brief 和 visual_plan 的图片需求和风格偏好
+  - 审查报告结构：包含 passed（是否通过）、resource_check、prompt_review、consistency_check、summary（统计信息）
+  - 问题分级：blocking_issues（阻塞问题，error 级别）、warnings（警告）、total_issues（总问题数）
+  - 只有 blocking_issues == 0 时才通过审查
+  - 审查报告会打印详细的统计信息和问题列表
+  - 一致性检查包括：Brief 中的图片需求是否在 visual_plan 中体现、风格偏好是否在 prompt 中体现
+  - 使用 logger 输出审查过程和结果，方便调试和追踪
+---
