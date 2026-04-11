@@ -276,3 +276,47 @@ Started: 2026年 4月11日 星期六 21时41分46秒 CST
 **测试**: 所有测试通过 (5 passed)
 
 **提交**: c22d735 - feat: US-019 - 移除 overlay 相关代码
+
+## 2026-04-11 - US-020: 实现局部修改的回退判断逻辑
+
+**目标**: 实现 PMAgent.analyze_modification() 方法，用于分析用户修改请求并判断回退策略
+
+**实现**:
+- 实现 analyze_modification() 方法，接收修改请求和目标页面参数
+- 使用 LLM 分析修改类型（content/visual/structure/image_assignment）
+- 智能判断应回退到哪个 Gate（Content/Visual/Execute）
+- 判断是否可以只修改单页，避免不必要的全局重建
+- 实现 _get_all_page_numbers() 辅助方法从 content_plan.json 或 visual_plan.json 获取页面编号
+- 返回详细的分析结果，包含修改类型、回退 Gate、受影响页面、判断理由和操作建议
+
+**测试**: 所有测试通过 (5 passed)
+
+**提交**: 481e844 - feat: US-020 - 实现局部修改的回退判断逻辑
+
+[2025-01-XX] US-021 完成
+- 创建 utils/plan_sync.py 模块
+- 实现 sync_content_plan() 和 sync_visual_plan() 函数
+- 支持 JSON -> Markdown 的双向同步
+- 自动检测变更并记录修改历史
+- Commit: fc65a7c
+
+## 2026-04-11 23:59 - US-022
+- 实现了执行失败的分类处理
+- 文件变更：创建 core/failure_classifier.py，修改 core/executor.py
+- **Learnings for future iterations:**
+  - 定义了 FailureType 枚举：MATERIAL（素材）、GENERATION（生成）、PLAN（计划）、ASSEMBLY（组装）
+  - 定义了 FailureSeverity 枚举：TRANSIENT（暂时性，可重试）、PERMANENT（永久性，需人工介入）
+  - 实现了 classify_failure() 函数，根据异常类型和错误信息自动分类失败
+  - 实现了 FailureReport 数据类，包含失败类型、严重程度、页码、文件路径、阶段、错误信息、重试次数等
+  - 素材问题检测：FileNotFoundError、文件不存在、权限错误等，标记为永久性失败
+  - 生成问题检测：API 错误、超时、网络问题等，区分暂时性和永久性失败
+  - 计划问题检测：JSON 解析错误、字段缺失等，标记为永久性失败
+  - 组装问题检测：PPTX 创建失败、模板问题等，标记为永久性失败
+  - 暂时性错误自动重试，最多 3 次，每次等待时间递增（5s、10s、15s）
+  - 永久性错误不重试，直接报告用户
+  - 种子页生成失败会进行智能重试，失败后使用灰色占位图
+  - 并行生成阶段收集所有失败报告，最后统一打印摘要
+  - 实现了 generate_failure_summary() 函数，生成详细的失败摘要报告
+  - 失败摘要按类型分组，统计可重试和需人工处理的失败数量
+  - 组装阶段失败会被捕获并分类，返回 None 而不是抛出异常
+---
