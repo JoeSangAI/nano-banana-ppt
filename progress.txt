@@ -320,3 +320,19 @@ Started: 2026年 4月11日 星期六 21时41分46秒 CST
   - 失败摘要按类型分组，统计可重试和需人工处理的失败数量
   - 组装阶段失败会被捕获并分类，返回 None 而不是抛出异常
 ---
+
+## 2026-04-11 23:59 - US-023
+- 升级 main.py 集成 PM Agent
+- 文件变更：修改 main.py
+- **Learnings for future iterations:**
+  - 在 generate_content_plan() 中初始化 PMAgent，调用 intake() 接收用户输入
+  - PM Agent 负责维护 brief.md 和 image_assets.json
+  - 在 generate_visual_plan() 中调用 determine_gate() 判断当前应该在哪个阶段
+  - 在 execute_from_plan() 中调用 final_intent_review() 执行最终审查
+  - 最终审查包含三层检查：资源完整性、Prompt 质量、Brief 一致性
+  - 使用 --force 参数可以跳过最终审查（用于调试或紧急情况）
+  - PM Agent 需要 OpenAI 兼容的 client，使用 openai.OpenAI 初始化
+  - 保留了所有现有的命令行接口，PM Agent 是透明集成的
+  - PM Agent 的 intake() 方法接收结构化输入：text, images, urls, template_pptx
+  - briefing 参数会传递给 PM Agent 作为用户意图文本
+---
