@@ -86,3 +86,28 @@ Started: 2026年 4月11日 星期六 21时41分46秒 CST
   - 失败时创建最小化 Brief（使用输入前 200 字符作为 goal）
   - 这个方法是 PM Agent 的核心能力，将自然语言转换为结构化任务定义
 ---
+
+## 2026-04-11 22:11 - US-008
+- 实现了 content_plan.md 到 content_plan.json 的编译器
+- 文件变更：创建 utils/compile_content_plan.py
+- **Learnings for future iterations:**
+  - 使用正则表达式解析 Markdown 标题层级
+  - 图片锚点格式：[IMAGE: 语义锚点]
+  - 自动推断幻灯片类型（cover/section/content/quote/data）
+  - JSON 输出包含 slides 数组和元数据
+---
+
+
+## 2026-04-11 22:35 - US-009
+- 升级 NarrativeAgent 输出 content_plan.md
+- 文件变更：修改 agents/narrative.py
+- **Learnings for future iterations:**
+  - 完善了 generate_narrative_outline() 方法，实现三种模式判断逻辑
+  - 新增 save_content_plan_md() 方法，生成包含图片语义锚点的 Markdown 格式
+  - 图片锚点格式：[IMAGE: 语义锚点]，插入在内容段落后
+  - 新增 _assign_image_anchor() 方法，根据页面内容智能匹配 brief 中的图片需求
+  - 生成 Markdown 后自动调用 compile_content_plan() 生成 JSON
+  - 根据页面类型（cover/section）决定标题层级（# 或 ##）
+  - 支持从 BriefManager 读取图片需求（image_requirements）
+  - 锚点匹配使用简单的关键词匹配策略
+---

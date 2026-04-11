@@ -947,6 +947,23 @@ class NarrativeAgent:
             logger.info(f"📝 检测到历史反馈，应用到本次生成...")
             constraints = self._apply_feedback_to_constraints(dict(constraints), feedback.get('latest', {}))
 
+        # 模式判断
+        detection = self.detect_complete_content_plan(content_context)
+
+        if detection['is_complete']:
+            logger.info(f"✅ 检测到完整 content_plan (置信度: {detection['confidence']:.2f})，使用直接复用模式")
+            outline = self._parse_complete_content_plan(content_context, content_file_path)
+        elif self.detect_structured_outline(content_context):
+            logger.info("✅ 检测到成熟大纲，使用解析模式")
+            outline = self._parse_structured_outline(content_context, constraints)
+        else:
+            logger.info("🧠 使用智能叙事模式")
+            # 这里应该有智能叙事的实现，但当前代码中缺失
+            # 暂时返回空列表
+            outline = []
+
+        return outline if outline else []
+
     def _merge_multiple_documents(self, file_paths: list) -> tuple:
         """
         合并多个文档的内容和元数据
@@ -1014,6 +1031,121 @@ class NarrativeAgent:
             content_file_path=content_file_paths[0],
             reuse_existing=reuse_existing
         )
+
+    def save_content_plan_md(
+        self,
+        outline: List[Dict],
+        output_path: str,
+        brief_manager=None
+    ) -> str:
+        """
+        将大纲保存为 content_plan.md 格式，包含图片语义锚点
+
+        Args:
+            outline: 大纲数据（JSON 格式）
+            output_path: 输出文件路径
+            brief_manager: Brief 管理器，用于获取图片位置意图
+
+        Returns:
+            生成的 Markdown 内容
+        """
+        from ..utils.compile_content_plan import compile_content_plan
+
+        logger.info(f"📝 正在生成 content_plan.md...")
+
+        # 获取图片需求（语义锚点）
+        image_anchors = []
+        if brief_manager and brief_manager.brief:
+            image_requirements = brief_manager.brief.image_requirements
+            image_anchors = [req.get('anchor', '') for req in image_requirements if req.get('anchor')]
+
+        # 构建 Markdown 内容
+        md_lines = ["# Content Plan\n"]
+
+        for page in outline:
+            page_num = page.get('page_num', 0)
+            page_type = page.get('type', 'content')
+            text_content = page.get('text_content', {})
+            headline = text_content.get('headline', f'第 {page_num} 页')
+            subhead = text_content.get('subhead', '')
+            body = page.get('body', text_content.get('body', []))
+            speaker_notes = page.get('speaker_notes', '')
+
+            # 根据页面类型决定标题层级
+            if page_type in ['cover', 'section']:
+                md_lines.append(f"# {headline}\n")
+            else:
+                md_lines.append(f"## {headline}\n")
+
+            # 副标题
+            if subhead:
+                md_lines.append(f"\n{subhead}\n")
+
+            # 正文要点
+            if body:
+                md_lines.append("")
+                for item in body:
+                    md_lines.append(f"- {item}")
+                md_lines.append("")
+
+            # 演讲备注
+            if speaker_notes:
+                md_lines.append(f"\n**演讲备注**：{speaker_notes}\n")
+
+            # 添加图片锚点标记
+            # 根据页面内容和 brief 中的图片需求，智能分配锚点
+            assigned_anchor = self._assign_image_anchor(page, image_anchors)
+            if assigned_anchor:
+                md_lines.append(f"\n[IMAGE: {assigned_anchor}]\n")
+
+            md_lines.append("")
+
+        # 写入文件
+        md_content = "\n".join(md_lines)
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(md_content, encoding='utf-8')
+
+        logger.info(f"✅ content_plan.md 已保存到: {output_path}")
+
+        # 自动编译为 JSON
+        try:
+            json_path = output_path.parent / "content_plan.json"
+            compile_content_plan(str(output_path), str(json_path))
+            logger.info(f"✅ content_plan.json 已生成: {json_path}")
+        except Exception as e:
+            logger.warning(f"⚠️ 编译 content_plan.json 失败: {e}")
+
+        return md_content
+
+    def _assign_image_anchor(self, page: Dict, available_anchors: List[str]) -> Optional[str]:
+        """
+        为页面分配图片语义锚点
+
+        根据页面内容和可用的锚点，智能匹配最合适的锚点
+        """
+        if not available_anchors:
+            return None
+
+        # 获取页面关键信息
+        text_content = page.get('text_content', {})
+        headline = text_content.get('headline', '').lower()
+        body = page.get('body', text_content.get('body', []))
+        body_text = ' '.join(body).lower() if body else ''
+        speaker_notes = page.get('speaker_notes', '').lower()
+
+        # 合并所有文本用于匹配
+        page_text = f"{headline} {body_text} {speaker_notes}"
+
+        # 简单的关键词匹配
+        for anchor in available_anchors:
+            anchor_lower = anchor.lower()
+            # 如果锚点中的关键词出现在页面文本中，则匹配
+            if anchor_lower in page_text or any(word in page_text for word in anchor_lower.split()):
+                return anchor
+
+        # 如果没有匹配，返回 None
+        return None
 
     def preview_outline(self, outline: List[Dict]) -> str:
         """
