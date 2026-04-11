@@ -94,6 +94,7 @@ from tools.nano_banana_ppt.utils.review_plan import (
     REVIEW_MD_FILENAME,
 )
 from tools.nano_banana_ppt.utils.content_validator import validate_content_visual_consistency
+from tools.nano_banana_ppt.utils.doc_normalizer import normalize_content_plan, normalize_visual_plan, normalize_brief
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -435,7 +436,31 @@ def generate_visual_plan(plan_dir: str, style_preference: str = None):
     if content_md_path.exists():
         with open(content_md_path, 'r', encoding='utf-8') as f:
             md_text = f.read()
-        parsed = parse_review_md(md_text)
+
+        # Gate 转换前：规范化 content_plan.md
+        print("\n📋 正在规范化 content_plan.md...")
+        normalized_content, issues = normalize_content_plan(md_text)
+
+        # 检查是否有无法自动修复的问题
+        blocking_issues = [issue for issue in issues if "错误" in issue or "缺失" in issue]
+        if blocking_issues:
+            print("❌ 发现无法自动修复的问题:")
+            for issue in blocking_issues:
+                print(f"   - {issue}")
+            print("\n请修复这些问题后再继续")
+            return None
+
+        # 如果有修复，保存规范化后的内容
+        if normalized_content != md_text:
+            with open(content_md_path, 'w', encoding='utf-8') as f:
+                f.write(normalized_content)
+            print("✅ content_plan.md 已规范化")
+            if issues:
+                print(f"   修复了 {len(issues)} 个格式问题")
+        else:
+            print("✅ content_plan.md 格式正确")
+
+        parsed = parse_review_md(normalized_content)
         if parsed and parsed.get("pages"):
             narrative_outline = parsed.get("pages")
             print(f"📄 已读取最新编辑的 content_plan.md 大纲")
@@ -757,6 +782,34 @@ def execute_from_plan(plan_input: str, output_name: str = None, resolution: str 
         from openai import OpenAI
         client = OpenAI(api_key=api_key, base_url=api_base)
         pm_agent = PMAgent(client, project_dir=proj_dir)
+
+        # Gate 转换前：规范化 visual_plan.md（如果存在）
+        visual_plan_md = Path(proj_dir) / "visual_plan.md"
+        if visual_plan_md.exists():
+            print("\n📋 正在规范化 visual_plan.md...")
+            with open(visual_plan_md, 'r', encoding='utf-8') as f:
+                vp_text = f.read()
+
+            normalized_vp, vp_issues = normalize_visual_plan(vp_text)
+
+            # 检查是否有无法自动修复的问题
+            blocking_vp_issues = [issue for issue in vp_issues if "错误" in issue or "缺失" in issue]
+            if blocking_vp_issues and not force:
+                print("❌ 发现无法自动修复的问题:")
+                for issue in blocking_vp_issues:
+                    print(f"   - {issue}")
+                print("\n请修复这些问题后再继续，或使用 --force 跳过")
+                return None
+
+            # 如果有修复，保存规范化后的内容
+            if normalized_vp != vp_text:
+                with open(visual_plan_md, 'w', encoding='utf-8') as f:
+                    f.write(normalized_vp)
+                print("✅ visual_plan.md 已规范化")
+                if vp_issues:
+                    print(f"   修复了 {len(vp_issues)} 个格式问题")
+            else:
+                print("✅ visual_plan.md 格式正确")
 
         # PM 最终意图审查
         if not force:
