@@ -68,15 +68,17 @@ class ImageAsset:
 class ImageAssetsManager:
     """图片资产管理器"""
 
-    def __init__(self, assets_file: Optional[str] = None):
+    def __init__(self, assets_file: Optional[str] = None, client=None):
         """
         初始化图片资产管理器
 
         Args:
             assets_file: 图片资产 JSON 文件路径，默认为 output/image_assets.json
+            client: OpenAI 兼容客户端，用于调用 VLM
         """
         self.assets_file = assets_file or "output/image_assets.json"
         self.assets: List[ImageAsset] = []
+        self.client = client
 
     def add_asset(self, asset: ImageAsset) -> None:
         """添加图片资产"""
@@ -92,3 +94,88 @@ class ImageAssetsManager:
     def get_assets_by_anchor(self, anchor: str) -> List[ImageAsset]:
         """根据语义锚点获取图片资产"""
         return [asset for asset in self.assets if asset.semantic_anchor == anchor]
+
+    def light_read_image(self, image_path: str) -> Optional[Dict[str, Any]]:
+        """
+        对图片进行轻量读图，判断图片类型和推荐模式
+
+        Args:
+            image_path: 图片路径
+
+        Returns:
+            包含 image_type, description, recommended_mode 的字典，失败返回 None
+        """
+        if not self.client:
+            raise ValueError("需要提供 client 才能使用轻量读图功能")
+
+        if not Path(image_path).exists():
+            return None
+
+        try:
+            # 读取并编码图片
+            from PIL import Image
+            import base64
+            from io import BytesIO
+
+            with Image.open(image_path) as img:
+                img = img.convert("RGB")
+                # 缩放以降低 token 消耗
+                img.thumbnail((512, 512))
+                buffered = BytesIO()
+                img.save(buffered, format="JPEG", quality=85)
+                img_b64 = base64.b64encode(buffered.getvalue()).decode()
+
+            # 构建 prompt
+            prompt = """分析这张图片，判断它的类型和最适合的处理模式。
+
+请输出一个 JSON 对象，包含以下字段：
+- "image_type": 图片类型，从以下选项中选择一个：["截图", "人物", "产品", "图表", "场景"]
+- "description": 简短描述（1-2句话，描述图片的主要内容）
+- "recommended_mode": 推荐的处理模式，从以下选项中选择一个：
+  * "intent_fusion" - 意向融合：只取语义，不保留可识别性（适合氛围图、场景图）
+  * "element_preserve" - 元素保留：保留主体，允许重组（适合人物、产品）
+  * "original_present" - 原图呈现：保留长宽比，轻微加工（适合截图、图表、精确信息）
+
+只输出 JSON，不要包含 markdown 代码块标记。"""
+
+            # 调用 VLM
+            response = self.client.chat.completions.create(
+                model="gemini-2.5-flash",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
+                        ]
+                    }
+                ],
+                temperature=0.1
+            )
+
+            content = response.choices[0].message.content.strip()
+
+            # 提取 JSON
+            start = content.find('{')
+            end = content.rfind('}')
+            if start != -1 and end != -1:
+                json_str = content[start:end+1]
+                result = json.loads(json_str)
+
+                # 更新对应的 ImageAsset
+                asset = self.get_asset_by_path(image_path)
+                if asset:
+                    asset.image_type = result.get("image_type")
+                    asset.description = result.get("description")
+                    mode_str = result.get("recommended_mode")
+                    if mode_str:
+                        asset.recommended_mode = ImageMode(mode_str)
+
+                return result
+            else:
+                return None
+
+        except Exception as e:
+            import logging
+            logging.warning(f"轻量读图失败: {image_path} ({e})")
+            return None
