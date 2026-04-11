@@ -425,8 +425,8 @@ def build_content_review_md(
             for idx, img in enumerate(native_images):
                 path = img.get('path', 'unknown_path')
                 role = img.get('semantic_role', '')
-                mode = img.get('integration_mode', 'overlay')
-                mode_str = "[融合]" if mode == "blend" else "[叠加]"
+                mode = img.get('integration_mode', 'blend')
+                mode_str = "[融合]"
                 bbox = img.get('bounding_box', {})
                 if bbox:
                     bbox_str = f"left: {bbox.get('left')}, top: {bbox.get('top')}, width: {bbox.get('width')}, height: {bbox.get('height')}"
@@ -642,18 +642,18 @@ def build_review_md(
                 if isinstance(img, str):
                     path = img
                     role = ''
-                    mode = 'overlay'
+                    mode = 'blend'
                     bbox_str = 'center'
                 else:
                     path = img.get('path', 'unknown_path')
                     role = img.get('semantic_role', '')
-                    mode = img.get('integration_mode', 'overlay')
+                    mode = img.get('integration_mode', 'blend')
                     bbox = img.get('bounding_box', {})
                     if bbox:
                         bbox_str = f"left: {bbox.get('left')}, top: {bbox.get('top')}, width: {bbox.get('width')}, height: {bbox.get('height')}"
                     else:
                         bbox_str = img.get('layout', 'center')
-                mode_str = "[融合]" if mode == "blend" else "[叠加]"
+                mode_str = "[融合]"
                 # 简化格式，去掉多余的信息和标签，只保留角色、预览和位置信息
 
                 # Make sure the path is correct relative to content_file when generating review md
@@ -854,11 +854,13 @@ def parse_review_md(md_text: str, project_dir: str = None) -> Dict[str, Any]:
                 img_match = re.search(r"^(.*?)\s*<img src=\"(?:file://)?([^\"]+)\".*?\/>\s*\(`(?:bounding_box`:\s*)?(.*?)`?\)", re.sub(r"^\s*\d+\.\s+", "", line))
                 if img_match:
                     raw_role = img_match.group(1).strip()
-                    integration_mode = "overlay"
+                    integration_mode = "blend"
                     if raw_role.startswith("[融合]"):
                         integration_mode = "blend"
                         role = raw_role[4:].strip()
                     elif raw_role.startswith("[叠加]"):
+                        # 兼容旧格式，但统一转为 blend
+                        integration_mode = "blend"
                         role = raw_role[4:].strip()
                     else:
                         role = raw_role
@@ -876,11 +878,13 @@ def parse_review_md(md_text: str, project_dir: str = None) -> Dict[str, Any]:
                     img_match = re.search(r"!\[(.*?)\]\((.*?)\)\s*\(`bounding_box`:\s*(.*?)\)", line)
                     if img_match:
                         raw_role = img_match.group(1).strip()
-                        integration_mode = "overlay"
+                        integration_mode = "blend"
                         if raw_role.startswith("[融合]"):
                             integration_mode = "blend"
                             role = raw_role[4:].strip()
                         elif raw_role.startswith("[叠加]"):
+                            # 兼容旧格式，但统一转为 blend
+                            integration_mode = "blend"
                             role = raw_role[4:].strip()
                         else:
                             role = raw_role
@@ -891,11 +895,13 @@ def parse_review_md(md_text: str, project_dir: str = None) -> Dict[str, Any]:
                         if img_match:
                             path = img_match.group(2).strip()
                             raw_role = img_match.group(3).strip()
-                            integration_mode = "overlay"
+                            integration_mode = "blend"
                             if raw_role.startswith("[融合]"):
                                 integration_mode = "blend"
                                 role = raw_role[4:].strip()
                             elif raw_role.startswith("[叠加]"):
+                                # 兼容旧格式，但统一转为 blend
+                                integration_mode = "blend"
                                 role = raw_role[4:].strip()
                             else:
                                 role = raw_role
@@ -905,11 +911,13 @@ def parse_review_md(md_text: str, project_dir: str = None) -> Dict[str, Any]:
                             if img_match:
                                 path = img_match.group(1).strip()
                                 raw_role = img_match.group(2).strip()
-                                integration_mode = "overlay"
+                                integration_mode = "blend"
                                 if raw_role.startswith("[融合]"):
                                     integration_mode = "blend"
                                     role = raw_role[4:].strip()
                                 elif raw_role.startswith("[叠加]"):
+                                    # 兼容旧格式，但统一转为 blend
+                                    integration_mode = "blend"
                                     role = raw_role[4:].strip()
                                 else:
                                     role = raw_role

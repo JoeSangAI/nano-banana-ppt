@@ -21,31 +21,7 @@ from pptx.dml.color import RGBColor
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-from utils.bbox import (_fix_black_corners, _normalize_bbox, _fit_bbox_within_region, _bbox_overlap_area, _lock_overlay_bbox)
-
-
-def _merge_native_images_with_locked_regions(native_images: List[Dict], calculated_overlay_images: List[Dict]) -> List[Dict]:
-    calculated_by_path = {
-        img.get("path"): img for img in calculated_overlay_images if img.get("path")
-    }
-    blend_reserved_regions = [
-        region
-        for region in (
-            _normalize_bbox(img.get("blend_reserved_region") or img.get("bounding_box"))
-            for img in native_images
-            if img.get("integration_mode", "overlay") == "blend"
-        )
-        if region
-    ]
-
-    merged_images = []
-    for image in native_images:
-        if image.get("integration_mode", "overlay") == "blend":
-            merged_images.append(dict(image))
-            continue
-        calc_image = calculated_by_path.get(image.get("path"))
-        merged_images.append(_lock_overlay_bbox(image, calc_image, blend_reserved_regions))
-    return merged_images
+from utils.bbox import (_fix_black_corners, _normalize_bbox, _fit_bbox_within_region, _bbox_overlap_area)
 
 
 class PPTGenerator:
@@ -95,13 +71,12 @@ class PPTGenerator:
         
         # Inject smart whitespace instructions based on native_images array
         if native_images and len(native_images) > 0:
-            overlay_areas = []
             blend_areas = []
             for idx, img_conf in enumerate(native_images):
                 layout = img_conf.get('layout')
                 bbox = img_conf.get('bounding_box')
-                integration_mode = img_conf.get('integration_mode', 'overlay')
-                
+                integration_mode = img_conf.get('integration_mode', 'blend')
+
                 area_text = None
                 if bbox:
                     # Translate bounding box to natural language roughly
@@ -109,7 +84,7 @@ class PPTGenerator:
                     top_pct = int(bbox.get('top', 0) * 100)
                     w_pct = int(bbox.get('width', 0) * 100)
                     h_pct = int(bbox.get('height', 0) * 100)
-                    
+
                     # Provide an even stronger spatial instruction
                     if left_pct > 50:
                         position = "the RIGHT SIDE"
@@ -117,7 +92,7 @@ class PPTGenerator:
                         position = "the LEFT SIDE"
                     else:
                         position = "the CENTER"
-                        
+
                     area_text = f"a massive space on {position} (starting {left_pct}% from left, {top_pct}% from top, spanning {w_pct}% width)"
                 elif layout:
                     # Legacy fallback
@@ -129,16 +104,9 @@ class PPTGenerator:
                     }
                     if layout in layout_prompts:
                         area_text = layout_prompts[layout]
-                
-                if area_text:
-                    if integration_mode == 'blend':
-                        blend_areas.append(area_text)
-                    else:
-                        overlay_areas.append(area_text)
-            
-            if overlay_areas:
-                areas_str = " and ".join(overlay_areas)
-                tech_suffix += f" CRITICAL VISUAL CONSTRAINT: You ABSOLUTELY MUST leave {areas_str} completely BLANK and EMPTY. Do NOT generate ANY text, shapes, or complex backgrounds in this area. It must be a flat, solid color gradient because a photo will be pasted over it later."
+
+                if area_text and integration_mode == 'blend':
+                    blend_areas.append(area_text)
 
             if blend_areas:
                 areas_str = " and ".join(blend_areas)
@@ -1012,15 +980,11 @@ Example:
             if not native_images and slide_plan.get('native_image'):
                 native_images = [slide_plan.get('native_image')]
 
-            # Only overlay images need placement. Blend images are already baked into the background.
-            overlay_images = [img_conf for img_conf in native_images if img_conf.get("integration_mode", "overlay") == "overlay"]
-            if overlay_images and img:
-                calculated_overlay_images = self._calculate_dynamic_layout(img, overlay_images)
-                native_images = _merge_native_images_with_locked_regions(native_images, calculated_overlay_images)
+            # Only blend images need placement. All images are now blend mode.
+            if native_images and img:
+                calculated_images = self._calculate_dynamic_layout(img, native_images)
 
             for img_conf in native_images:
-                if img_conf.get("integration_mode", "overlay") == "blend":
-                    continue
                 img_path = img_conf.get('path')
                 
                 # Check if it's an http path that hasn't been resolved yet

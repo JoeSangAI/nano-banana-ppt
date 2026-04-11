@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class ImageSelector:
     """
     负责候选图片的深度理解、分析和打分。
-    避免大模型对图片的“幻觉”认知，并明确区分它是应该作为 blend(氛围) 还是 overlay(确切信息) 使用。
+    避免大模型对图片的”幻觉”认知，统一使用 blend 模式进行图片融合。
     """
     def __init__(self, client):
         self.client = client
@@ -60,7 +60,6 @@ class ImageSelector:
 
         image_type = result.get("image_type", "unknown")
         text_density = result.get("text_density", "low")
-        overlay_score = int(result.get("suitability_for_overlay", 0) or 0)
         blend_score = int(result.get("suitability_for_blend", 0) or 0)
         semantic_summary = (result.get("semantic_summary") or "").lower()
 
@@ -72,12 +71,11 @@ class ImageSelector:
             or "qr code" in semantic_summary
             or "watch" in semantic_summary
             or "blancpain" in semantic_summary
-            or (ratio >= 2.6 and text_density in {"low", "high"} and overlay_score >= 70 and blend_score <= 40)
+            or (ratio >= 2.6 and text_density in {"low", "high"} and blend_score <= 40)
         ):
             result["is_junk"] = True
             result["junk_reason"] = "detected_ad_banner_or_qr"
 
-        result["overlay_score"] = overlay_score
         result["blend_score"] = blend_score
         return result
 
@@ -111,8 +109,7 @@ Analyze and output a STRICT JSON object with the following keys:
 - "semantic_summary": A concise, 1-2 sentence description of what the image actually depicts (e.g., "A retro-style illustration of numerous lemmings lining up to jump off a cliff", "A line chart showing revenue growth from 2020 to 2024").
 - "image_type": Categorize as ONE of: ["chart", "screenshot", "portrait", "illustration", "product", "abstract_concept", "junk_qr_ad"].
 - "text_density": How much text is in the image? ["none", "low", "high"].
-- "suitability_for_overlay": Score 0-100. High if it's a chart, specific UI screenshot, or contains exact text/data that MUST NOT be altered.
-- "suitability_for_blend": Score 0-100. High if it's a portrait, atmospheric photograph, or abstract illustration that can be seamlessly merged into a background gradient without losing exact textual data.
+- "suitability_for_blend": Score 0-100. High if it's suitable for seamless integration into the presentation background.
 - "is_junk": Boolean. True if it's a QR code, an irrelevant course advertisement, a UI navigation icon, or otherwise useless for a core presentation slide.
 
 Ensure the output is ONLY a valid JSON object. No markdown blocks like ```json."""
@@ -192,7 +189,6 @@ Ensure the output is ONLY a valid JSON object. No markdown blocks like ```json."
                 f"{idx}. path={item.get('path')}{used_tag}\n"
                 f"   summary={item.get('semantic_summary')}\n"
                 f"   image_type={item.get('image_type')}\n"
-                f"   overlay_score={item.get('overlay_score')}\n"
                 f"   blend_score={item.get('blend_score')}\n"
                 f"   text_density={item.get('text_density')}\n"
             )
@@ -227,15 +223,14 @@ Return ONLY valid JSON:
     {{
       "path": "exact candidate path",
       "semantic_role": "why this image is irreplaceable on this slide",
-      "integration_mode": "overlay|blend"
+      "integration_mode": "blend"
     }}
   ]
 }}
 
 Rules:
 - Pick at most {max_images} images. Picking 0 is strongly preferred over picking a mediocre image.
-- Use overlay for charts, screenshots, dense text, or exact data preservation.
-- Use blend for portraits or product photos that should be artistically integrated.
+- All images use blend mode for seamless integration.
 - Do NOT fabricate paths. Do NOT select [ALREADY USED] images.
 - Confidence below 80 means you should return native_images as [].
 
@@ -291,7 +286,8 @@ Candidates:
             match = next((img for img in analyzed_images if img.get("path") == path), None)
             if not match:
                 continue
-            mode = item.get("integration_mode") or ("overlay" if match.get("overlay_score", 0) >= match.get("blend_score", 0) else "blend")
+            # 统一使用 blend 模式
+            mode = "blend"
             sanitized_images.append(
                 {
                     "path": path,

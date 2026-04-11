@@ -11,7 +11,6 @@ def test_postprocess_marks_wide_ad_banner_as_junk():
         "semantic_summary": "A promotional advertisement banner for a Blancpain watch.",
         "image_type": "product",
         "text_density": "low",
-        "suitability_for_overlay": 90,
         "suitability_for_blend": 20,
         "is_junk": False,
     }

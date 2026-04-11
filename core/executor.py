@@ -142,7 +142,7 @@ def _build_native_image_entry(path: str, mode: str, role: str, position: str) ->
     if not path or path == "PLACEHOLDER":
         return None
 
-    # 统一使用 blend 模式（已废弃 overlay）
+    # 统一使用 blend 模式
     entry = {
         "path": path,
         "integration_mode": "blend",
@@ -257,10 +257,10 @@ def _generate_single_slide(slide, visual_plan, slides_dir, generator, resolution
         raw_native_images = [slide.get('native_image')]
 
     blend_images = []
-    # 架构大升级：全部放弃 overlay 硬贴图，统一转化为 blend (重绘/融合)
+    # 统一使用 blend 模式进行图片融合
     for ni in raw_native_images:
         normalized = dict(ni)
-        # 强制将所有图片转为 blend，彻底摒弃丑陋的狗皮膏药贴图
+        # 强制将所有图片转为 blend
         normalized['integration_mode'] = 'blend'
         if normalized.get("bounding_box") and not normalized.get("blend_reserved_region"):
             normalized["blend_reserved_region"] = dict(normalized["bounding_box"])

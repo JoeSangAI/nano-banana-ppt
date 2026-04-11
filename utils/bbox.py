@@ -81,30 +81,3 @@ def _bbox_overlap_area(a: Optional[Dict], b: Optional[Dict]) -> float:
     overlap_w = max(0.0, min(ax2, bx2) - max(box_a["left"], box_b["left"]))
     overlap_h = max(0.0, min(ay2, by2) - max(box_a["top"], box_b["top"]))
     return round(overlap_w * overlap_h, 6)
-
-
-def _lock_overlay_bbox(
-    original_image: Dict,
-    calculated_image: Optional[Dict],
-    blend_reserved_regions: List[Dict],
-) -> Dict:
-    merged_image = dict(original_image)
-    candidate_bbox = None
-    if calculated_image:
-        candidate_bbox = calculated_image.get("dynamic_bounding_box") or calculated_image.get("bounding_box")
-
-    allowed_bbox = (
-        original_image.get("overlay_allowed_region")
-        or original_image.get("bounding_box")
-        or candidate_bbox
-    )
-    locked_bbox = _fit_bbox_within_region(candidate_bbox, allowed_bbox)
-
-    if locked_bbox and any(_bbox_overlap_area(locked_bbox, reserved) > 0.0001 for reserved in blend_reserved_regions):
-        fallback_bbox = _normalize_bbox(original_image.get("bounding_box")) or _normalize_bbox(original_image.get("overlay_allowed_region"))
-        if fallback_bbox:
-            locked_bbox = fallback_bbox
-
-    if locked_bbox:
-        merged_image["dynamic_bounding_box"] = locked_bbox
-    return merged_image
