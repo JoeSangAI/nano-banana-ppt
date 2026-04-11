@@ -34,3 +34,15 @@ Started: 2026年 4月11日 星期六 21时41分46秒 CST
   - 增量更新逻辑：如果资产已存在，只填充空字段；如果不存在，直接添加
   - 这种设计允许用户手动编辑 JSON 后重新加载，不会丢失已有的轻量读图结果
 ---
+
+## 2026-04-11 22:10 - US-004
+- 创建了 brief 文件结构和管理器
+- 文件变更：创建 utils/brief_manager.py
+- **Learnings for future iterations:**
+  - Brief 使用 Markdown + YAML frontmatter 格式存储
+  - YAML frontmatter 包含结构化数据，Markdown body 包含可读内容
+  - 使用正则表达式解析 frontmatter：`^---\s*\n(.*?)\n---\s*\n(.*)$`
+  - BriefManager 提供 load/save/update 三个核心方法
+  - update() 方法支持部分字段更新，自动保存
+  - Brief 数据类包含：goal（必填）、audience、style_preference、constraints（列表）、image_requirements（字典列表）
+---
