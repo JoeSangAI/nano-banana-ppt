@@ -23,3 +23,14 @@ Started: 2026年 4月11日 星期六 21时41分46秒 CST
   - 返回结果需要提取 JSON（去除可能的 markdown 包裹）
   - 轻量读图结果自动更新到对应的 ImageAsset 对象
 ---
+
+## 2026-04-11 22:05 - US-003
+- 实现了 image_assets.json 的读写功能
+- 文件变更：修改 utils/image_assets.py
+- **Learnings for future iterations:**
+  - save_to_json() 自动创建输出目录
+  - JSON 格式：顶层包含 "assets" 数组
+  - load_from_json() 支持增量更新：只更新空字段，不覆盖已有数据
+  - 增量更新逻辑：如果资产已存在，只填充空字段；如果不存在，直接添加
+  - 这种设计允许用户手动编辑 JSON 后重新加载，不会丢失已有的轻量读图结果
+---
