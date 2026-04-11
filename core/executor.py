@@ -10,6 +10,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 from pathlib import Path
+from typing import List, Dict, Any, Optional
 from PIL import Image
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..')))
@@ -25,6 +26,169 @@ BOOKEND_FAMILY = {'cover', 'back', 'ending'}
 
 # 并发生成时最大工作线程数，避免 API 限流
 MAX_PARALLEL_WORKERS = 2  # Reduced from 3 to 2 for better stability
+
+
+def _convert_new_format_to_slides(pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    将新的 visual_plan.json 格式（pages 数组）转换为旧格式的 slides 数组
+
+    新格式：
+    {
+        "pages": [
+            {
+                "page_number": 1,
+                "title": "第 1 页 · 标题",
+                "images": [
+                    {
+                        "path": "output/images/xxx.png",
+                        "mode": "INTENT_FUSION",
+                        "role": "装饰图片",
+                        "position": "center",
+                        "visual_prompt": "生成的完整 prompt"
+                    }
+                ]
+            }
+        ]
+    }
+
+    旧格式：
+    [
+        {
+            "page_num": 1,
+            "type": "content",
+            "visual_prompt": "...",
+            "native_images": [...]
+        }
+    ]
+    """
+    slides = []
+
+    for page in pages:
+        page_num = page.get("page_number", 1)
+        title = page.get("title", "")
+        images = page.get("images", [])
+
+        # 推断页面类型（根据标题或页码）
+        page_type = _infer_page_type(page_num, title)
+
+        # 处理图片：根据图片模式调整生成策略
+        native_images = []
+        visual_prompt_parts = []
+
+        for img in images:
+            path = img.get("path", "")
+            mode = img.get("mode", "INTENT_FUSION")
+            role = img.get("role", "")
+            position = img.get("position", "center")
+            visual_prompt = img.get("visual_prompt", "")
+
+            # 跳过占位符
+            if path == "PLACEHOLDER":
+                continue
+
+            # 根据图片模式构建 native_images
+            native_image_entry = _build_native_image_entry(path, mode, role, position)
+            if native_image_entry:
+                native_images.append(native_image_entry)
+
+            # 收集 visual_prompt
+            if visual_prompt:
+                visual_prompt_parts.append(visual_prompt)
+
+        # 构建 slide 对象
+        slide = {
+            "page_num": page_num,
+            "type": page_type,
+            "visual_prompt": "\n\n".join(visual_prompt_parts) if visual_prompt_parts else f"Page {page_num}: {title}",
+            "native_images": native_images
+        }
+
+        slides.append(slide)
+
+    return slides
+
+
+def _infer_page_type(page_num: int, title: str) -> str:
+    """根据页码和标题推断页面类型"""
+    title_lower = title.lower()
+
+    if page_num == 1 or "封面" in title or "cover" in title_lower:
+        return "cover"
+    elif "章节" in title or "section" in title_lower or title.startswith("第") and "章" in title:
+        return "section"
+    elif "hero" in title_lower:
+        return "hero"
+    else:
+        return "content"
+
+
+def _build_native_image_entry(path: str, mode: str, role: str, position: str) -> Optional[Dict[str, Any]]:
+    """
+    根据图片模式构建 native_image 条目
+
+    三种模式的处理策略：
+    1. INTENT_FUSION（意向融合）：只取语义，不保留可识别性
+       - integration_mode: blend
+       - 不设置 blend_reserved_region，允许完全重绘
+
+    2. ELEMENT_PRESERVE（元素保留）：保留主体，允许重组
+       - integration_mode: blend
+       - 设置 blend_reserved_region，保留主体区域
+
+    3. ORIGINAL_PRESENT（原图呈现）：保留长宽比，轻微加工
+       - integration_mode: blend
+       - 设置 blend_reserved_region 为全图，最小化改动
+    """
+    if not path or path == "PLACEHOLDER":
+        return None
+
+    # 统一使用 blend 模式（已废弃 overlay）
+    entry = {
+        "path": path,
+        "integration_mode": "blend",
+        "semantic_role": role or "subject"
+    }
+
+    # 根据模式调整 blend_reserved_region
+    if mode == "INTENT_FUSION":
+        # 意向融合：不设置保留区域，允许完全重绘
+        pass
+
+    elif mode == "ELEMENT_PRESERVE":
+        # 元素保留：设置中等保留区域（保留主体）
+        entry["blend_reserved_region"] = {
+            "x": 0.2,
+            "y": 0.2,
+            "width": 0.6,
+            "height": 0.6
+        }
+
+    elif mode == "ORIGINAL_PRESENT":
+        # 原图呈现：设置全图保留区域（最小化改动）
+        entry["blend_reserved_region"] = {
+            "x": 0.05,
+            "y": 0.05,
+            "width": 0.9,
+            "height": 0.9
+        }
+
+    # 根据 position 调整 bounding_box（用于布局提示）
+    entry["bounding_box"] = _position_to_bounding_box(position)
+
+    return entry
+
+
+def _position_to_bounding_box(position: str) -> Dict[str, float]:
+    """将位置描述转换为 bounding_box"""
+    position_map = {
+        "full": {"x": 0.0, "y": 0.0, "width": 1.0, "height": 1.0},
+        "center": {"x": 0.2, "y": 0.2, "width": 0.6, "height": 0.6},
+        "left": {"x": 0.0, "y": 0.2, "width": 0.4, "height": 0.6},
+        "right": {"x": 0.6, "y": 0.2, "width": 0.4, "height": 0.6},
+        "top": {"x": 0.2, "y": 0.0, "width": 0.6, "height": 0.4},
+        "bottom": {"x": 0.2, "y": 0.6, "width": 0.6, "height": 0.4},
+    }
+    return position_map.get(position, position_map["center"])
 
 
 def _generate_single_slide(slide, visual_plan, slides_dir, generator, resolution, masters, clean_background_image=None, project_dir=None):
@@ -160,8 +324,15 @@ def execute_plan(plan_file: str, output_name: str = "Final_Presentation",
     with open(plan_file, 'r', encoding='utf-8') as f:
         raw = json.load(f)
 
-    visual_plan = raw if isinstance(raw, list) else raw.get("slides", raw)
-    meta = raw.get("meta", {}) if isinstance(raw, dict) else {}
+    # 支持新的 visual_plan.json 格式（包含 pages 数组）
+    if "pages" in raw:
+        # 新格式：从 pages 数组转换为旧格式的 slides
+        visual_plan = _convert_new_format_to_slides(raw["pages"])
+        meta = {"source_file": raw.get("source_file", "")}
+    else:
+        # 旧格式：兼容现有逻辑
+        visual_plan = raw if isinstance(raw, list) else raw.get("slides", raw)
+        meta = raw.get("meta", {}) if isinstance(raw, dict) else {}
 
     proj = Path(project_dir) if project_dir else Path(meta.get("project_dir", "output"))
     slides_dir = proj / "slides"
