@@ -224,3 +224,23 @@ Started: 2026年 4月11日 星期六 21时41分46秒 CST
   - 一致性检查包括：Brief 中的图片需求是否在 visual_plan 中体现、风格偏好是否在 prompt 中体现
   - 使用 logger 输出审查过程和结果，方便调试和追踪
 ---
+
+## 2026-04-11 23:59 - US-017
+- 升级 executor 支持新的 visual_plan.json 格式
+- 文件变更：修改 core/executor.py
+- **Learnings for future iterations:**
+  - 实现了 _convert_new_format_to_slides() 函数，将新格式（pages 数组）转换为旧格式（slides 数组）
+  - 新格式包含 pages 数组，每个 page 有 page_number, title, images 字段
+  - 每个 image 包含 path, mode, role, position, visual_prompt 字段
+  - 实现了三种图片模式的处理策略：
+    * INTENT_FUSION（意向融合）：不设置 blend_reserved_region，允许完全重绘
+    * ELEMENT_PRESERVE（元素保留）：设置中等保留区域（0.2-0.8），保留主体元素
+    * ORIGINAL_PRESENT（原图呈现）：设置全图保留区域（0.05-0.95），最小化改动
+  - 实现了 _infer_page_type() 函数，根据页码和标题推断页面类型（cover/section/hero/content）
+  - 实现了 _build_native_image_entry() 函数，根据图片模式构建 native_image 条目
+  - 实现了 _position_to_bounding_box() 函数，将位置描述转换为 bounding_box
+  - 支持一页多图：每个 page 的 images 数组可以包含多张图片，自动转换为 native_images
+  - 保持向后兼容：如果 JSON 不包含 pages 字段，使用旧格式逻辑
+  - 所有图片统一使用 blend 模式（已废弃 overlay）
+  - visual_prompt 从 compile_visual_plan 生成，包含完整的创作要求和上下文
+---
