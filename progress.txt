@@ -141,3 +141,18 @@ Started: 2026年 4月11日 星期六 21时41分46秒 CST
   - normalize_visual_plan() 升级为调用 parse_image_blocks()，统计一页多图和待补图情况
   - ImageBlock 提供 to_markdown() 方法，可以将对象转换回 Markdown 格式
 ---
+
+## 2026-04-11 23:45 - US-012
+- 升级 VisualAgent 输出 visual_plan.md
+- 文件变更：修改 agents/visual.py
+- **Learnings for future iterations:**
+  - 新增 save_visual_plan_md() 方法，生成半结构化图片块格式
+  - 图片块格式使用 ```image 代码块，包含 path, mode, role, position 字段
+  - mode 必须使用大写格式（INTENT_FUSION/ELEMENT_PRESERVE/ORIGINAL_PRESENT）
+  - 根据 image_assets.json 中的语义锚点（semantic_anchor）分配图片到页面
+  - 推荐模式优先级：用户指定 mode > 轻量读图推荐 mode > 默认 INTENT_FUSION
+  - 新增 _recommend_position() 方法，根据图片类型和页面类型推荐位置
+  - 支持待补图占位：path 设置为 "PLACEHOLDER"
+  - 封面和章节页默认添加占位图（如果没有图片锚点）
+  - 图片位置推荐逻辑：封面/章节/hero 使用 full，截图/产品/图表使用 center，人物使用 right，场景使用 full
+---
