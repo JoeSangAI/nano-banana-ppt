@@ -2,11 +2,127 @@
 文档规范化工具
 
 在用户修改 Markdown 后自动规整格式，检测并报告无法自动修复的问题。
+
+图片块格式示例：
+```image
+path: output/images/product_screenshot.png
+mode: ELEMENT_PRESERVE
+role: 展示产品核心功能
+position: center
+```
+
+支持的字段：
+- path: 图片路径（必填，可以是 "PLACEHOLDER" 表示待补图）
+- mode: 图片模式（必填，INTENT_FUSION/ELEMENT_PRESERVE/ORIGINAL_PRESENT）
+- role: 图片在页面中的作用（可选）
+- position: 图片位置（可选，center/left/right/full）
 """
 
 import re
-from typing import Tuple, List
+from typing import Tuple, List, Dict, Optional
 from pathlib import Path
+from dataclasses import dataclass
+
+
+@dataclass
+class ImageBlock:
+    """图片块数据结构"""
+    path: str
+    mode: str
+    role: Optional[str] = None
+    position: Optional[str] = None
+    line_number: int = 0  # 在文档中的行号，用于错误报告
+
+    def to_markdown(self) -> str:
+        """转换为 Markdown 格式"""
+        lines = [
+            "```image",
+            f"path: {self.path}",
+            f"mode: {self.mode}"
+        ]
+        if self.role:
+            lines.append(f"role: {self.role}")
+        if self.position:
+            lines.append(f"position: {self.position}")
+        lines.append("```")
+        return '\n'.join(lines)
+
+
+def parse_image_blocks(content: str) -> Tuple[List[ImageBlock], List[str]]:
+    """
+    解析 visual_plan.md 中的图片块
+
+    Args:
+        content: Markdown 内容
+
+    Returns:
+        (image_blocks, issues) 元组
+        - image_blocks: 解析出的图片块列表
+        - issues: 解析过程中发现的问题
+    """
+    issues = []
+    image_blocks = []
+    lines = content.split('\n')
+
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+
+        # 检测图片块开始
+        if line.startswith('```image'):
+            block_start = i
+            block_data = {}
+            i += 1
+
+            # 解析图片块内容
+            while i < len(lines):
+                line = lines[i].strip()
+
+                # 图片块结束
+                if line == '```':
+                    # 验证必填字段
+                    if 'path' not in block_data:
+                        issues.append(f"第 {block_start+1} 行：图片块缺少必填字段 path")
+                    if 'mode' not in block_data:
+                        issues.append(f"第 {block_start+1} 行：图片块缺少必填字段 mode")
+                    else:
+                        # 验证 mode 值
+                        valid_modes = ['INTENT_FUSION', 'ELEMENT_PRESERVE', 'ORIGINAL_PRESENT']
+                        if block_data['mode'] not in valid_modes:
+                            issues.append(f"第 {block_start+1} 行：图片模式非法（应为 {'/'.join(valid_modes)}）")
+
+                    # 创建 ImageBlock 对象
+                    if 'path' in block_data and 'mode' in block_data:
+                        image_block = ImageBlock(
+                            path=block_data['path'],
+                            mode=block_data['mode'],
+                            role=block_data.get('role'),
+                            position=block_data.get('position'),
+                            line_number=block_start + 1
+                        )
+                        image_blocks.append(image_block)
+
+                    break
+
+                # 解析字段
+                if ':' in line:
+                    field_match = re.match(r'^(\w+):\s*(.*)$', line)
+                    if field_match:
+                        field_name = field_match.group(1)
+                        field_value = field_match.group(2).strip()
+
+                        # 验证字段名
+                        valid_fields = ['path', 'mode', 'role', 'position']
+                        if field_name not in valid_fields:
+                            issues.append(f"第 {i+1} 行：未知字段 {field_name}（有效字段：{', '.join(valid_fields)}）")
+                        else:
+                            block_data[field_name] = field_value
+
+                i += 1
+
+        i += 1
+
+    return image_blocks, issues
 
 
 def normalize_content_plan(content: str) -> Tuple[str, List[str]]:
@@ -83,6 +199,10 @@ def normalize_visual_plan(content: str) -> Tuple[str, List[str]]:
     """
     规范化 visual_plan.md 的格式
 
+    支持：
+    - 一页多图：同一个标题下可以有多个图片块
+    - 待补图占位：path 可以是 "PLACEHOLDER"
+
     Args:
         content: 原始 Markdown 内容
 
@@ -90,51 +210,58 @@ def normalize_visual_plan(content: str) -> Tuple[str, List[str]]:
         (normalized_content, issues) 元组
     """
     issues = []
-    lines = content.split('\n')
-    normalized_lines = []
 
-    in_image_block = False
-    image_block_start = 0
+    # 先用解析函数检查图片块
+    image_blocks, parse_issues = parse_image_blocks(content)
+    issues.extend(parse_issues)
+
+    # 统计每页的图片数量
+    lines = content.split('\n')
+    current_slide_title = None
+    slide_image_counts = {}
 
     for i, line in enumerate(lines):
-        original_line = line
+        # 检测幻灯片标题（## 开头）
+        if re.match(r'^##\s+', line):
+            current_slide_title = line.strip()
+            if current_slide_title not in slide_image_counts:
+                slide_image_counts[current_slide_title] = 0
 
+        # 检测图片块
+        if line.strip().startswith('```image') and current_slide_title:
+            slide_image_counts[current_slide_title] += 1
+
+    # 检查待补图占位
+    placeholder_count = sum(1 for block in image_blocks if block.path == 'PLACEHOLDER')
+    if placeholder_count > 0:
+        issues.append(f"发现 {placeholder_count} 个待补图占位（path: PLACEHOLDER），执行前需要补充实际图片")
+
+    # 格式规范化
+    normalized_lines = []
+
+    for i, line in enumerate(lines):
         # 1. 修复标题格式
         if line.startswith('#'):
             match = re.match(r'^(#+)(\S)', line)
             if match:
                 line = match.group(1) + ' ' + line[len(match.group(1)):]
 
-        # 2. 检测图片块
-        if line.strip().startswith('```image'):
-            in_image_block = True
-            image_block_start = i + 1
-        elif line.strip() == '```' and in_image_block:
-            in_image_block = False
-
-        # 3. 检查图片块内的字段
-        if in_image_block and ':' in line:
-            field_match = re.match(r'^\s*(\w+):\s*(.*)$', line)
-            if field_match:
-                field_name = field_match.group(1)
-                field_value = field_match.group(2).strip()
-
-                # 检查必填字段
-                if field_name == 'path' and not field_value:
-                    issues.append(f"第 {i+1} 行：图片路径不能为空")
-                elif field_name == 'mode' and field_value not in ['INTENT_FUSION', 'ELEMENT_PRESERVE', 'ORIGINAL_PRESENT', '']:
-                    issues.append(f"第 {i+1} 行：图片模式非法（应为 INTENT_FUSION/ELEMENT_PRESERVE/ORIGINAL_PRESENT）")
-
-        # 4. 修复行尾空格
+        # 2. 修复行尾空格
         line = line.rstrip()
 
         normalized_lines.append(line)
 
-    # 5. 确保文件以单个换行符结尾
+    # 3. 确保文件以单个换行符结尾
     while normalized_lines and normalized_lines[-1].strip() == '':
         normalized_lines.pop()
 
     normalized_content = '\n'.join(normalized_lines) + '\n'
+
+    # 4. 报告一页多图的情况（信息性，不是错误）
+    multi_image_slides = {title: count for title, count in slide_image_counts.items() if count > 1}
+    if multi_image_slides:
+        for title, count in multi_image_slides.items():
+            issues.append(f"信息：{title} 包含 {count} 张图片（一页多图）")
 
     return normalized_content, issues
 
