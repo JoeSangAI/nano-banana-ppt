@@ -107,14 +107,165 @@ class PMAgent:
 
     def _extract_images_from_input(self, user_input: Dict[str, Any]) -> None:
         """
-        从用户输入中抽取图片资产（占位实现）
+        从用户输入中抽取图片资产
 
         Args:
             user_input: 用户输入
         """
-        # TODO: US-006 将实现完整的图片抽取逻辑
-        logger.info("🖼️ 抽取图片资产（占位实现）")
-        pass
+        logger.info("🖼️ 开始抽取图片资产")
+
+        # 1. 从本地路径列表抽取图片
+        if user_input.get("images"):
+            self._extract_from_local_paths(user_input["images"])
+
+        # 2. 从 URL 列表下载图片
+        if user_input.get("urls"):
+            self._extract_from_urls(user_input["urls"])
+
+        # 3. 从毛坯 PPTX 中提取图片
+        if user_input.get("template_pptx"):
+            self._extract_from_pptx(user_input["template_pptx"])
+
+        # 4. 保存图片资产
+        self.image_assets_manager.save_to_json()
+        logger.info(f"✅ 图片资产抽取完成，共 {len(self.image_assets_manager.assets)} 张图片")
+
+    def _extract_from_local_paths(self, image_paths: List[str]) -> None:
+        """
+        从本地路径列表抽取图片
+
+        Args:
+            image_paths: 图片路径列表
+        """
+        for path in image_paths:
+            path_obj = Path(path)
+            if not path_obj.exists():
+                logger.warning(f"图片不存在: {path}")
+                continue
+
+            # 检查是否已存在
+            if self.image_assets_manager.get_asset_by_path(path):
+                logger.info(f"图片已存在，跳过: {path}")
+                continue
+
+            # 创建图片资产
+            asset = ImageAsset(path=path)
+            self.image_assets_manager.add_asset(asset)
+
+            # 执行轻量读图
+            try:
+                result = self.image_assets_manager.light_read_image(path)
+                if result:
+                    logger.info(f"✅ 轻量读图完成: {path} -> {result.get('image_type')}")
+                else:
+                    logger.warning(f"轻量读图失败: {path}")
+            except Exception as e:
+                logger.error(f"轻量读图异常: {path} ({e})")
+
+    def _extract_from_urls(self, urls: List[str]) -> None:
+        """
+        从 URL 列表下载图片
+
+        Args:
+            urls: 图片 URL 列表
+        """
+        import requests
+        from urllib.parse import urlparse
+        import hashlib
+
+        for url in urls:
+            try:
+                # 下载图片
+                response = requests.get(url, timeout=30)
+                response.raise_for_status()
+
+                # 生成文件名（使用 URL hash）
+                url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
+                parsed = urlparse(url)
+                ext = Path(parsed.path).suffix or ".jpg"
+                filename = f"downloaded_{url_hash}{ext}"
+                save_path = self.project_dir / "images" / filename
+
+                # 确保目录存在
+                save_path.parent.mkdir(parents=True, exist_ok=True)
+
+                # 保存图片
+                with open(save_path, 'wb') as f:
+                    f.write(response.content)
+
+                logger.info(f"✅ 下载图片: {url} -> {save_path}")
+
+                # 创建图片资产
+                asset = ImageAsset(path=str(save_path))
+                self.image_assets_manager.add_asset(asset)
+
+                # 执行轻量读图
+                try:
+                    result = self.image_assets_manager.light_read_image(str(save_path))
+                    if result:
+                        logger.info(f"✅ 轻量读图完成: {save_path} -> {result.get('image_type')}")
+                except Exception as e:
+                    logger.error(f"轻量读图异常: {save_path} ({e})")
+
+            except Exception as e:
+                logger.error(f"下载图片失败: {url} ({e})")
+
+    def _extract_from_pptx(self, pptx_path: str) -> None:
+        """
+        从毛坯 PPTX 中提取图片
+
+        Args:
+            pptx_path: PPTX 文件路径
+        """
+        try:
+            from pptx import Presentation
+        except ImportError:
+            logger.error("需要安装 python-pptx: pip install python-pptx")
+            return
+
+        try:
+            prs = Presentation(pptx_path)
+            image_count = 0
+
+            for slide_idx, slide in enumerate(prs.slides):
+                for shape in slide.shapes:
+                    # 检查是否是图片
+                    if hasattr(shape, "image"):
+                        image = shape.image
+                        image_bytes = image.blob
+
+                        # 生成文件名
+                        ext = image.ext
+                        filename = f"pptx_slide{slide_idx + 1}_img{image_count + 1}.{ext}"
+                        save_path = self.project_dir / "images" / filename
+
+                        # 确保目录存在
+                        save_path.parent.mkdir(parents=True, exist_ok=True)
+
+                        # 保存图片
+                        with open(save_path, 'wb') as f:
+                            f.write(image_bytes)
+
+                        logger.info(f"✅ 提取图片: 第 {slide_idx + 1} 页 -> {save_path}")
+
+                        # 创建图片资产
+                        asset = ImageAsset(path=str(save_path))
+                        self.image_assets_manager.add_asset(asset)
+
+                        # 执行轻量读图
+                        try:
+                            result = self.image_assets_manager.light_read_image(str(save_path))
+                            if result:
+                                logger.info(f"✅ 轻量读图完成: {save_path} -> {result.get('image_type')}")
+                        except Exception as e:
+                            logger.error(f"轻量读图异常: {save_path} ({e})")
+
+                        image_count += 1
+
+            logger.info(f"✅ 从 PPTX 提取了 {image_count} 张图片")
+
+        except Exception as e:
+            logger.error(f"从 PPTX 提取图片失败: {pptx_path} ({e})")
 
     def _organize_user_intent(self, text: str) -> None:
         """
