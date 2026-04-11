@@ -13,6 +13,7 @@ from openai import OpenAI
 from ..utils.llm_client import chat_completion_with_fallback, MODEL_FALLBACK_CHAIN
 from .style_library import get_curated_style, STYLE_LIBRARY
 from .reviewer import ReviewerAgent
+from ..utils.image_assets import ImageMode
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -612,6 +613,142 @@ Ensure the palette has high contrast for text reading.
         return instructions.get(page_type, instructions['content'])
 
     # ── Main plan generation ──
+
+    def save_visual_plan_md(
+        self,
+        narrative_outline: List[Dict],
+        style_config: Dict,
+        image_assets_manager,
+        output_path: str = "output/visual_plan.md"
+    ) -> None:
+        """
+        生成 visual_plan.md 文件
+
+        根据 content_plan.md 中的语义锚点和 image_assets.json 中的图片资产，
+        为每个页面分配图片并生成图片块。
+
+        Args:
+            narrative_outline: 叙事大纲（来自 content_plan.json）
+            style_config: 风格配置
+            image_assets_manager: 图片资产管理器
+            output_path: 输出路径
+        """
+        logger.info("🎨 Visual Agent: 正在生成 visual_plan.md...")
+
+        from pathlib import Path
+        from ..utils.doc_normalizer import ImageBlock
+
+        # 确保输出目录存在
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+
+        # 构建 Markdown 内容
+        lines = ["# Visual Plan", "", ""]
+
+        # 遍历每个页面
+        for page in narrative_outline:
+            page_num = page.get('page_num', 0)
+            page_type = page.get('type', 'content')
+            text_content = page.get('text_content', {})
+            headline = text_content.get('headline', '')
+
+            # 添加页面标题
+            lines.append(f"## 第 {page_num} 页 · {headline or page_type}")
+            lines.append("")
+
+            # 查找该页面的图片锚点
+            image_anchors = page.get('image_anchors', [])
+
+            # 为每个锚点分配图片
+            for anchor in image_anchors:
+                # 从 image_assets_manager 中查找匹配的图片
+                matching_assets = image_assets_manager.get_assets_by_anchor(anchor)
+
+                if not matching_assets:
+                    # 如果没有匹配的图片，创建待补图占位
+                    image_block = ImageBlock(
+                        path="PLACEHOLDER",
+                        mode="INTENT_FUSION",
+                        role=f"图片锚点：{anchor}",
+                        position="center"
+                    )
+                    lines.append(image_block.to_markdown())
+                    lines.append("")
+                else:
+                    # 为每个匹配的图片生成图片块
+                    for asset in matching_assets:
+                        # 推荐模式：优先使用用户指定的 mode，否则使用推荐模式
+                        mode = asset.mode or asset.recommended_mode or ImageMode.INTENT_FUSION
+
+                        # 根据图片类型推荐位置
+                        position = self._recommend_position(asset.image_type, page_type)
+
+                        # 生成角色描述
+                        role = asset.role or asset.description or f"图片锚点：{anchor}"
+
+                        # 转换 mode 为大写格式
+                        if hasattr(mode, 'value'):
+                            mode_str = mode.value.upper()
+                        else:
+                            mode_str = str(mode).upper()
+
+                        image_block = ImageBlock(
+                            path=asset.path,
+                            mode=mode_str,
+                            role=role,
+                            position=position
+                        )
+                        lines.append(image_block.to_markdown())
+                        lines.append("")
+
+            # 如果页面没有图片锚点，但根据页面类型需要图片，添加占位
+            if not image_anchors and page_type in ['cover', 'section', 'hero']:
+                image_block = ImageBlock(
+                    path="PLACEHOLDER",
+                    mode="INTENT_FUSION",
+                    role=f"{page_type} 页面背景图",
+                    position="full"
+                )
+                lines.append(image_block.to_markdown())
+                lines.append("")
+
+            lines.append("---")
+            lines.append("")
+
+        # 写入文件
+        content = '\n'.join(lines)
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+
+        logger.info(f"✅ visual_plan.md 已生成: {output_path}")
+
+    def _recommend_position(self, image_type: Optional[str], page_type: str) -> str:
+        """
+        根据图片类型和页面类型推荐图片位置
+
+        Args:
+            image_type: 图片类型（截图/人物/产品/图表/场景）
+            page_type: 页面类型
+
+        Returns:
+            推荐的位置（center/left/right/full）
+        """
+        # 封面和章节页通常使用全屏
+        if page_type in ['cover', 'section', 'hero']:
+            return 'full'
+
+        # 根据图片类型推荐位置
+        if image_type == '截图':
+            return 'center'
+        elif image_type == '人物':
+            return 'right'
+        elif image_type == '产品':
+            return 'center'
+        elif image_type == '图表':
+            return 'center'
+        elif image_type == '场景':
+            return 'full'
+        else:
+            return 'center'
 
     def generate_visual_plan(self, narrative_outline: List[Dict], style_definition_tuple: tuple, assets: Dict, template_info: Dict = None) -> List[Dict]:
         """生成完整的视觉执行计划 (Visual Plan)"""

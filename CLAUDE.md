@@ -1,129 +1,104 @@
-# CLAUDE.md
+# Ralph Agent Instructions
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+You are an autonomous coding agent working on a software project.
 
-## Project Overview
+## Your Task
 
-Nano Banana PPT is a multi-agent pipeline that converts documents (Markdown, PDF, text) into professional PowerPoint presentations using Google Gemini (via OpenAI-compatible API). It is designed to be invoked as a Skill from AI agents (Cursor, Claude Code).
+1. Read the PRD at `prd.json` (in the same directory as this file)
+2. Read the progress log at `progress.txt` (check Codebase Patterns section first)
+3. Check you're on the correct branch from PRD `branchName`. If not, check it out or create from main.
+4. Pick the **highest priority** user story where `passes: false`
+5. Implement that single user story
+6. Run quality checks (e.g., typecheck, lint, test - use whatever your project requires)
+7. Update CLAUDE.md files if you discover reusable patterns (see below)
+8. If checks pass, commit ALL changes with message: `feat: [Story ID] - [Story Title]`
+9. Update the PRD to set `passes: true` for the completed story
+10. Append your progress to `progress.txt`
 
-## Environment Setup
+## Progress Report Format
 
-Install dependencies:
-```bash
-pip install openai python-pptx pillow pymupdf requests python-dotenv matplotlib
+APPEND to progress.txt (never replace, always append):
+```
+## [Date/Time] - [Story ID]
+- What was implemented
+- Files changed
+- **Learnings for future iterations:**
+  - Patterns discovered (e.g., "this codebase uses X for Y")
+  - Gotchas encountered (e.g., "don't forget to update Z when changing W")
+  - Useful context (e.g., "the evaluation panel is in component X")
+---
 ```
 
-Configure API keys in `.env` (auto-discovered at project root or `~/.cursor/skills/nano-banana-ppt/.env`):
-```
-OPENAI_API_KEY=sk-...           # MiniMax for text
-OPENAI_API_BASE=https://api.minimax.chat/v1
-IMAGE_GEN_API_KEY=sk-...       # DeerAPI for image generation
-IMAGE_GEN_API_BASE=https://api.deerapi.com/v1
-```
-`IMAGE_GEN_API_KEY` is used by `core/generator.py` for Gemini image generation via DeerAPI. DeerAPI supports 1:4 + 4K + reference images.
+The learnings section is critical - it helps future iterations avoid repeating mistakes and understand the codebase better.
 
-## CLI Commands
+## Consolidate Patterns
 
-**main.py 自动处理所有路径问题** — 无需关心工作目录或模块路径，任意位置均可直接运行。
-
-```bash
-# 从任意目录直接运行（推荐）
-python3 /Users/Joe_1/Desktop/nano-banana-ppt/main.py <command> ...
-
-# 或通过 skills 目录运行
-cd ~/.claude/skills/nano-banana-ppt && python3 main.py <command> ...
-
-# 从 Desktop 使用模块方式运行
-cd /Users/Joe_1/Desktop && python3 -m tools.nano_banana_ppt.main <command> ...
-
-```bash
-# Phase 1a: Generate content outline (saves content_plan.md)
-python3 -m tools.nano_banana_ppt.main plan-content <content_file> [template_file] [logo_file] [output_name] [--pages N]
-
-# Phase 1b: Generate visual plan (saves visual_plan.md / master_plan.md)
-python3 -m tools.nano_banana_ppt.main plan-visual <project_dir> [--style <style_name>]
-
-# Phase 1 shortcut (runs both 1a + 1b):
-python3 -m tools.nano_banana_ppt.main plan <content_file> [template_file] [logo_file] [output_name] [--style <style_name>] [--pages N]
-
-# Optional: text-only prototype PPTX (no image generation)
-python3 -m tools.nano_banana_ppt.main prototype <project_dir_or_plan_md> [output_name] [--slides 1 2]
-
-# Phase 2: Generate images + assemble PPTX
-python3 -m tools.nano_banana_ppt.main execute <project_dir_or_plan_md> [output_name] [--resolution 1K|2K|4K] [--slides 3 5 7]
-
-# Upscale existing slides
-python3 -m tools.nano_banana_ppt.main upscale <project_dir> [--resolution 4K] [--slides 1 3 5]
-
-# Legacy one-shot (non-interactive)
-python3 -m tools.nano_banana_ppt.main auto <content_file> [template_file] [logo_file] [output_name]
-```
-
-## Running Tests
-
-```bash
-# Run all tests
-pytest tests/
-
-# Run a single test file
-pytest tests/test_llm_client.py -v
-
-# Run a specific test
-pytest tests/test_image_selector_logic.py::test_name -v
-```
-
-Tests import from `tools.nano_banana_ppt.*`, so run pytest from the Desktop directory (which has the `tools/` symlink):
-
-```bash
-cd /Users/Joe_1/Desktop && pytest tests/
-```
-
-## Architecture
+If you discover a **reusable pattern** that future iterations should know, add it to the `## Codebase Patterns` section at the TOP of progress.txt (create it if it doesn't exist). This section should consolidate the most important learnings:
 
 ```
-nano-banana-ppt/
-  main.py              # CLI entry point; orchestrates all phases
-  agents/
-    narrative.py       # NarrativeAgent: content → structured slide outline (JSON)
-    visual.py          # VisualAgent: outline → visual prompts + style definition
-    visual_flash.py    # Lighter/faster variant of VisualAgent
-    template.py        # TemplateAgent: PDF/PPTX → extracted style + reference images
-    style_library.py   # Style loader: reads styles/*.md files at import time
-  styles/              # 38 visual style presets as Markdown files (YAML frontmatter + body)
-  core/
-    executor.py        # execute_plan(): orchestrates parallel image generation
-    generator.py       # PPTGenerator: calls Gemini image API, assembles PPTX via python-pptx
-    image_selector.py  # ImageSelector: VLM-based image quality/relevance filtering
-    data_visualizer.py # render_chart_image(): Matplotlib chart rendering (bar/line/pie)
-  utils/
-    llm_client.py      # chat_completion_with_fallback(): model fallback chain (429/503 handling)
-    review_plan.py     # parse/build master_plan.md ↔ plan.json conversion
-    regenerate.py      # Partial slide regeneration helpers
-    image_utils.py     # Image download, WebP conversion, aspect-ratio utilities
-    analyzer.py        # Content analysis helpers
+## Codebase Patterns
+- Example: Use `sql<number>` template for aggregations
+- Example: Always use `IF NOT EXISTS` for migrations
+- Example: Export types from actions.ts for UI components
 ```
 
-### Data Flow
+Only add patterns that are **general and reusable**, not story-specific details.
 
-1. `plan-content`: `NarrativeAgent` reads source doc → produces `content_plan.md` (human-readable outline with speaker notes)
-2. `plan-visual`: `VisualAgent` + `TemplateAgent` read `content_plan.md` → produce `visual_plan.md` / `master_plan.md` (Art Director manifesto + per-slide visual descriptions)
-3. **Human review gate** — agent MUST stop and show the plan to the user before proceeding
-4. `execute`: `review_plan.py` parses `visual_plan.md` → derives `plan.json` (with `visual_prompt` per slide) → `executor.py` generates images in parallel (max 2 workers) → `generator.py` assembles final `.pptx`
+## Update CLAUDE.md Files
 
-### Key Design Patterns
+Before committing, check if any edited files have learnings worth preserving in nearby CLAUDE.md files:
 
-- **Auto-bootstrap**: `main.py` automatically resolves its own location and sets up the correct `sys.path` / `tools/` structure, regardless of where it is invoked from.
-- **API client**: All agents use `openai.OpenAI` pointed at a Gemini-compatible endpoint. Image generation uses the native Gemini REST API (not OpenAI images). DeerAPI image generation: `extra_body={"image_config": {"aspect_ratio": "1:4", "imageSize": "4K"}}` — supports all ratios (1:1, 1:4, 9:16, etc.) and 4K resolution.
-- **Model fallback**: `utils/llm_client.py` maintains a session-scoped set of 429-exhausted models and falls back through `MODEL_FALLBACK_CHAIN` automatically.
-- **Seed-then-parallel execution**: `executor.py` first generates "seed" slides (first of each type: `content`, `section`, `hero`) serially to establish visual consistency masters, then generates remaining slides in parallel using those masters as `reference_images`.
-- **All-Blend architecture**: Native images from source documents are never hard-overlaid; they are passed as `reference_images` to Gemini with a redraw prompt for seamless integration.
-- **Output structure**: All artifacts land in `~/Desktop/AI output/ppt/{YYYYMMDD}_{project_name}/`.
+1. **Identify directories with edited files** - Look at which directories you modified
+2. **Check for existing CLAUDE.md** - Look for CLAUDE.md in those directories or parent directories
+3. **Add valuable learnings** - If you discovered something future developers/agents should know:
+   - API patterns or conventions specific to that module
+   - Gotchas or non-obvious requirements
+   - Dependencies between files
+   - Testing approaches for that area
+   - Configuration or environment requirements
 
-### Available Style Presets (`--style`)
+**Examples of good CLAUDE.md additions:**
+- "When modifying X, also update Y to keep them in sync"
+- "This module uses pattern Z for all API calls"
+- "Tests require the dev server running on PORT 3000"
+- "Field names must match the template exactly"
 
-38 styles across 7 categories, defined as Markdown files in `styles/`. Each file uses YAML frontmatter (id, category, aliases, palette, fonts, best_for, avoid) and Markdown body sections (风格描述, 造型语言, 图像风格, 强调色用法).
+**Do NOT add:**
+- Story-specific implementation details
+- Temporary debugging notes
+- Information already in progress.txt
 
-To add a custom style: create a new `.md` file in `styles/` following the same format. It will be auto-loaded at next run.
+Only update CLAUDE.md if you have **genuinely reusable knowledge** that would help future work in that directory.
 
-Key presets:
-`blackboard`, `whiteboard`, `sketch_note`, `blueprint`, `exploded_view`, `minimal_data`, `terminal_tech`, `swiss_design`, `academic_paper`, `claude_minimalist`, `apple_keynote`, `liquid_glass`, `dark_luxury`, `executive_dashboard`, `strategic_infographic`, `sharp_minimalism`, `soft_3d_clay`, `corporate_memphis`, `paper_craft`, `magazine_editorial`, `yellow_black_editorial`, `modern_newspaper`, `black_orange_creative`, `neo_brutalism`, `holographic_chrome`, `cyberpunk`, `manga_narrative`, `sports_energy`, `digital_neo_pop`, `pink_street_style`, `japanese_aesthetic`, `traditional_chinese`, `royal_blue_red_watercolor`, `deformed_flat_persona`, `studio_mockup_premium`, `classic_pop_sculpture_vaporwave`, `tech_art_neon`, `mincho_handwritten_mix`
+## Quality Requirements
+
+- ALL commits must pass your project's quality checks (typecheck, lint, test)
+- Do NOT commit broken code
+- Keep changes focused and minimal
+- Follow existing code patterns
+
+## Browser Testing (If Available)
+
+For any story that changes UI, verify it works in the browser if you have browser testing tools configured (e.g., via MCP):
+
+1. Navigate to the relevant page
+2. Verify the UI changes work as expected
+3. Take a screenshot if helpful for the progress log
+
+If no browser tools are available, note in your progress report that manual browser verification is needed.
+
+## Stop Condition
+
+After completing a user story, check if ALL stories have `passes: true`.
+
+If ALL stories are complete and passing, reply with:
+<promise>COMPLETE</promise>
+
+If there are still stories with `passes: false`, end your response normally (another iteration will pick up the next story).
+
+## Important
+
+- Work on ONE story per iteration
+- Commit frequently
+- Keep CI green
+- Read the Codebase Patterns section in progress.txt before starting
