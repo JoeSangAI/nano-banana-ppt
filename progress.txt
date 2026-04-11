@@ -336,3 +336,19 @@ Started: 2026年 4月11日 星期六 21时41分46秒 CST
   - PM Agent 的 intake() 方法接收结构化输入：text, images, urls, template_pptx
   - briefing 参数会传递给 PM Agent 作为用户意图文本
 ---
+
+## 2026-04-11 23:59 - US-024
+- 添加 Gate 之间的规范化检查
+- 文件变更：修改 main.py
+- **Learnings for future iterations:**
+  - 在 generate_visual_plan() 中，读取 content_plan.md 后立即调用 normalize_content_plan()
+  - 在 execute_from_plan() 中，执行前调用 normalize_visual_plan() 规范化 visual_plan.md
+  - 规范化函数返回 (normalized_content, issues) 元组
+  - 检查 issues 中是否有阻塞问题（包含"错误"或"缺失"关键词）
+  - 如果有阻塞问题，停止执行并提示用户修复
+  - 如果内容被修改，自动保存规范化后的文件
+  - 轻量告知用户规范化结果（修复了多少问题）
+  - 使用 --force 参数可以跳过阻塞检查（用于调试）
+  - 规范化是透明的，不影响用户体验，只在有问题时才提示
+  - 规范化在 PM 最终审查之前执行，确保文档格式正确
+---
