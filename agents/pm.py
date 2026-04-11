@@ -389,3 +389,205 @@ class PMAgent:
                 brief = Brief(goal=text[:200])  # 使用前 200 字符作为 goal
                 self.brief_manager.save(brief)
                 logger.warning("⚠️ 使用简化 Brief")
+
+    def final_intent_review(self) -> Dict[str, Any]:
+        """
+        执行前的最终意图审查
+
+        检查项：
+        1. 资源完整性（调用 resource_check）
+        2. Prompt 质量（调用 prompt_guard）
+        3. Brief 与 visual_plan 的一致性
+
+        Returns:
+            审查报告，包含：
+            - passed: 是否通过审查
+            - resource_check: 资源检查报告
+            - prompt_review: Prompt 审查报告
+            - consistency_check: 一致性检查结果
+            - summary: 汇总信息
+        """
+        from ..utils.resource_check import check_resources, print_report as print_resource_report
+        from ..utils.prompt_guard import review_visual_plan, print_review_report
+        import json
+
+        logger.info("🔍 开始最终意图审查")
+
+        report = {
+            "passed": False,
+            "resource_check": None,
+            "prompt_review": None,
+            "consistency_check": None,
+            "summary": {
+                "total_issues": 0,
+                "blocking_issues": 0,
+                "warnings": 0,
+            }
+        }
+
+        # 1. 资源完整性检查
+        logger.info("📋 检查资源完整性...")
+        try:
+            resource_report = check_resources(
+                output_dir=str(self.project_dir),
+                check_images=True,
+                check_placeholders=True,
+                check_fields=True,
+                check_consistency=True
+            )
+            report["resource_check"] = resource_report.to_dict()
+
+            # 统计问题
+            report["summary"]["total_issues"] += len(resource_report.issues)
+            report["summary"]["blocking_issues"] += resource_report.summary.get("error", 0)
+            report["summary"]["warnings"] += resource_report.summary.get("warning", 0)
+
+            if not resource_report.passed:
+                logger.warning(f"⚠️ 资源检查未通过：{resource_report.summary.get('error', 0)} 个错误")
+                print_resource_report(resource_report)
+            else:
+                logger.info("✅ 资源检查通过")
+
+        except Exception as e:
+            logger.error(f"资源检查失败: {e}")
+            report["resource_check"] = {"error": str(e)}
+            report["summary"]["blocking_issues"] += 1
+
+        # 2. Prompt 质量审查
+        visual_plan_json = self.project_dir / "visual_plan.json"
+        if visual_plan_json.exists():
+            logger.info("📝 审查 Visual Prompt 质量...")
+            try:
+                prompt_review_report = review_visual_plan(
+                    visual_plan_json_path=str(visual_plan_json),
+                    llm_client=self.client,
+                    strategy="auto",  # 自动策略：轻检查 + 种子页深查 + 异常页必查
+                    seed_pages=[1],  # 第一页作为种子页
+                    content_plan_json_path=str(self.project_dir / "content_plan.json"),
+                    style_config=None
+                )
+                report["prompt_review"] = prompt_review_report.to_dict()
+
+                # 统计问题
+                report["summary"]["total_issues"] += len(prompt_review_report.issues)
+                report["summary"]["blocking_issues"] += prompt_review_report.stats.get("errors", 0)
+                report["summary"]["warnings"] += prompt_review_report.stats.get("warnings", 0)
+
+                if prompt_review_report.stats.get("errors", 0) > 0:
+                    logger.warning(f"⚠️ Prompt 审查发现 {prompt_review_report.stats['errors']} 个错误")
+                    print_review_report(prompt_review_report)
+                else:
+                    logger.info("✅ Prompt 审查通过")
+
+            except Exception as e:
+                logger.error(f"Prompt 审查失败: {e}")
+                report["prompt_review"] = {"error": str(e)}
+                report["summary"]["warnings"] += 1
+        else:
+            logger.warning("⚠️ visual_plan.json 不存在，跳过 Prompt 审查")
+            report["prompt_review"] = {"skipped": "visual_plan.json not found"}
+
+        # 3. Brief 与 visual_plan 的一致性检查
+        logger.info("🔗 检查 Brief 与 Visual Plan 的一致性...")
+        try:
+            consistency_issues = self._check_brief_visual_consistency()
+            report["consistency_check"] = consistency_issues
+
+            if consistency_issues:
+                report["summary"]["total_issues"] += len(consistency_issues)
+                report["summary"]["warnings"] += len(consistency_issues)
+                logger.warning(f"⚠️ 发现 {len(consistency_issues)} 个一致性问题")
+                for issue in consistency_issues:
+                    logger.warning(f"  - {issue}")
+            else:
+                logger.info("✅ 一致性检查通过")
+
+        except Exception as e:
+            logger.error(f"一致性检查失败: {e}")
+            report["consistency_check"] = {"error": str(e)}
+            report["summary"]["warnings"] += 1
+
+        # 4. 判断是否通过
+        report["passed"] = report["summary"]["blocking_issues"] == 0
+
+        # 5. 打印汇总
+        logger.info("\n" + "=" * 60)
+        logger.info("最终意图审查报告")
+        logger.info("=" * 60)
+        if report["passed"]:
+            logger.info("✅ 审查通过，可以执行")
+        else:
+            logger.error(f"❌ 审查未通过，发现 {report['summary']['blocking_issues']} 个阻塞问题")
+
+        logger.info(f"\n问题统计:")
+        logger.info(f"  总问题数: {report['summary']['total_issues']}")
+        logger.info(f"  阻塞问题: {report['summary']['blocking_issues']}")
+        logger.info(f"  警告: {report['summary']['warnings']}")
+        logger.info("=" * 60 + "\n")
+
+        return report
+
+    def _check_brief_visual_consistency(self) -> List[str]:
+        """
+        检查 Brief 与 visual_plan 的一致性
+
+        Returns:
+            一致性问题列表
+        """
+        import json
+
+        issues = []
+
+        # 加载 Brief
+        brief = self.brief_manager.load()
+        if not brief:
+            issues.append("Brief 文件不存在")
+            return issues
+
+        # 加载 visual_plan.json
+        visual_plan_json = self.project_dir / "visual_plan.json"
+        if not visual_plan_json.exists():
+            issues.append("visual_plan.json 文件不存在")
+            return issues
+
+        try:
+            with open(visual_plan_json, 'r', encoding='utf-8') as f:
+                visual_plan = json.load(f)
+        except Exception as e:
+            issues.append(f"无法读取 visual_plan.json: {e}")
+            return issues
+
+        # 检查图片需求是否被满足
+        if brief.image_requirements:
+            brief_anchors = {req.get("anchor") for req in brief.image_requirements if req.get("anchor")}
+            visual_anchors = set()
+
+            for page in visual_plan.get("pages", []):
+                for img in page.get("images", []):
+                    anchor = img.get("semantic_anchor")
+                    if anchor:
+                        visual_anchors.add(anchor)
+
+            # 检查是否有未满足的图片需求
+            missing_anchors = brief_anchors - visual_anchors
+            if missing_anchors:
+                issues.append(f"Brief 中的图片需求未在 visual_plan 中体现: {', '.join(missing_anchors)}")
+
+        # 检查风格偏好是否一致
+        if brief.style_preference:
+            # 这里可以进一步检查 visual_plan 中的 prompt 是否符合风格偏好
+            # 简化实现：只检查是否有风格配置
+            style_mentioned = False
+            for page in visual_plan.get("pages", []):
+                for img in page.get("images", []):
+                    prompt = img.get("visual_prompt", "")
+                    if brief.style_preference.lower() in prompt.lower():
+                        style_mentioned = True
+                        break
+                if style_mentioned:
+                    break
+
+            if not style_mentioned:
+                issues.append(f"Brief 中的风格偏好「{brief.style_preference}」未在 visual_plan 的 prompt 中体现")
+
+        return issues
