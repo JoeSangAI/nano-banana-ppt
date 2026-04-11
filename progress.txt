@@ -190,3 +190,21 @@ Started: 2026年 4月11日 星期六 21时41分46秒 CST
   - 可以作为模块导入或命令行工具使用
   - 只有 error 级别的问题会导致 passed=False
 ---
+
+## 2026-04-11 22:31 - US-015
+- 将 Reviewer 降级为工具函数
+- 文件变更：创建 utils/prompt_guard.py
+- **Learnings for future iterations:**
+  - 实现了分层审查策略：全量轻检查（快速扫描）+ 种子页深查 + 异常页必查
+  - 定义了 CheckIssue 和 ReviewReport 数据类，结构化表示审查结果
+  - 轻量检查不调用 LLM，快速扫描明显问题（PLACEHOLDER、空 prompt、非法 mode、长度异常）
+  - 深度检查调用 LLM 审阅，从 6 个维度改进 prompt（风格、内容、技术、叙事、精简、情感）
+  - 审查策略支持 4 种模式：auto（自动）、light（仅轻检查）、deep（全量深查）、seed_only（仅种子页）
+  - 返回 ReviewReport 包含问题列表（issues）和改进建议（patches）
+  - 问题分为 3 个严重级别：error（阻塞）、warning（需注意）、info（提示）
+  - 问题分为 6 个类别：style、content、technical、narrative、redundancy、emotion
+  - 从 ReviewerAgent 迁移的核心逻辑：_review_single_prompt() 调用 LLM 审阅单个 prompt
+  - 使用 gemini-2.0-flash-exp 快速模型进行审阅，temperature=0.3
+  - 计算 prompt 差异比例（diff_ratio），超过 30% 差异时记录为 info 级别问题
+  - 提供 print_review_report() 函数，友好地打印审查报告
+---
