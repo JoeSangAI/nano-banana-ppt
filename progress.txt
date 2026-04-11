@@ -367,3 +367,20 @@ Started: 2026年 4月11日 星期六 21时41分46秒 CST
   - 文档说明了三种图片模式的使用场景和效果差异
   - CLI 命令说明包含了所有重要参数（--briefing, --pages, --style, --force, --regenerate 等）
 ---
+
+## 2026-04-11 23:30 - US-026
+- 创建 tests/test_v4_workflow.py 集成测试文件
+- 测试 PM Agent 初始化和 intake 流程
+- 测试 ImageAssetsManager 和 BriefManager
+- 测试文档规范化（content_plan 和 visual_plan）
+- 测试资源完整性检查
+- 测试 PM Gate 判断和修改分析
+- 测试 content_plan 和 visual_plan 编译
+- 所有 11 个测试用例通过
+
+**Learnings for future iterations:**
+- visual_plan.md 使用 ## 二级标题来标识页面，不是 # 一级标题
+- compile_visual_plan 只接受 2 个参数（md_path, json_path），不需要 content_json_path
+- 测试时使用 pytest fixtures 创建临时目录，测试后自动清理
+- Mock OpenAI client 时需要模拟完整的响应结构（choices[0].message.content）
+---
