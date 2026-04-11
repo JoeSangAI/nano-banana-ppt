@@ -111,3 +111,33 @@ Started: 2026年 4月11日 星期六 21时41分46秒 CST
   - 支持从 BriefManager 读取图片需求（image_requirements）
   - 锚点匹配使用简单的关键词匹配策略
 ---
+
+## 2026-04-11 23:00 - US-010
+- 实现了文档规范化工具
+- 文件变更：创建 utils/doc_normalizer.py
+- **Learnings for future iterations:**
+  - 实现了三个规范化函数：normalize_content_plan(), normalize_visual_plan(), normalize_brief()
+  - 规范化策略：自动修复格式问题，检测并报告无法自动修复的问题
+  - 常见格式问题包括：标题缺少空格、图片锚点格式不规范、中英文标点混用、多余空行、行尾空格
+  - 返回 (normalized_content, issues) 元组，issues 是问题列表
+  - 图片锚点格式：[IMAGE: 语义描述]，统一大小写，确保冒号后有空格
+  - 检测缺失的必填字段：content_plan 需要标题，visual_plan 需要 path 和合法的 mode，brief 需要 goal
+  - 文件规范化不改变语义，只修复格式问题
+---
+
+## 2026-04-11 23:30 - US-011
+- 实现了 visual_plan.md 的半结构化图片块格式
+- 文件变更：修改 utils/doc_normalizer.py
+- **Learnings for future iterations:**
+  - 定义了 ImageBlock 数据类，包含 path, mode, role, position 字段
+  - 图片块格式使用 ```image 代码块，字段以 key: value 形式表示
+  - 实现了 parse_image_blocks() 函数，解析图片块并返回 ImageBlock 对象列表
+  - 支持一页多图：同一个标题下可以有多个图片块
+  - 支持待补图占位：path 可以设置为 "PLACEHOLDER"
+  - 图片块必填字段：path 和 mode
+  - 图片块可选字段：role（图片作用）和 position（图片位置）
+  - mode 必须是三种之一：INTENT_FUSION（意向融合）、ELEMENT_PRESERVE（元素保留）、ORIGINAL_PRESENT（原图呈现）
+  - 解析函数会验证字段完整性和合法性，返回详细的错误报告
+  - normalize_visual_plan() 升级为调用 parse_image_blocks()，统计一页多图和待补图情况
+  - ImageBlock 提供 to_markdown() 方法，可以将对象转换回 Markdown 格式
+---
