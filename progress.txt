@@ -244,3 +244,19 @@ Started: 2026年 4月11日 星期六 21时41分46秒 CST
   - 所有图片统一使用 blend 模式（已废弃 overlay）
   - visual_prompt 从 compile_visual_plan 生成，包含完整的创作要求和上下文
 ---
+
+## 2026-04-11 23:59 - US-018
+- 升级 generator 支持三种图片模式
+- 文件变更：修改 core/generator.py
+- **Learnings for future iterations:**
+  - 实现了三种图片模式的 prompt 策略：
+    * INTENT_FUSION（意向融合）：只取语义和概念，完全重新创作，不保留可识别元素
+    * ELEMENT_PRESERVE（元素保留）：保留主体元素（人物/产品/关键对象），但可以重组背景和次要元素
+    * ORIGINAL_PRESENT（原图呈现）：像素级保留原图，只允许轻微的光影调整
+  - 图片模式从 native_images 的 mode 字段读取
+  - 只有 integration_mode='blend' 的图片才应用模式策略
+  - overlay 模式的图片不受影响（它们是后期叠加的）
+  - 每种模式都有明确的 prompt 指令，告诉 AI 如何处理参考图片
+  - ORIGINAL_PRESENT 最严格（保留一切），INTENT_FUSION 最自由（只取灵感）
+  - 这个实现与 US-017 中 executor 设置的 blend_reserved_region 配合工作
+---
