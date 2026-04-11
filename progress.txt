@@ -352,3 +352,18 @@ Started: 2026年 4月11日 星期六 21时41分46秒 CST
   - 规范化是透明的，不影响用户体验，只在有问题时才提示
   - 规范化在 PM 最终审查之前执行，确保文档格式正确
 ---
+
+## 2026-04-11 23:59 - US-025
+- 更新文档和示例
+- 文件变更：修改 CLAUDE.md, README.md，创建 examples/brief.md, examples/image_assets.json
+- **Learnings for future iterations:**
+  - 在 CLAUDE.md 中添加了 v4 架构概述，包含核心概念、关键文件、工作流程、图片模式说明
+  - 在 README.md 开头添加了 v4 架构章节，说明文档驱动、PM 兜底、图片前置三大理念
+  - 创建了示例 brief.md，展示 YAML frontmatter + Markdown body 的格式
+  - 创建了示例 image_assets.json，展示图片资产的完整结构（包含轻量读图结果）
+  - 更新了 CLI 命令说明，反映三阶段工作流（plan-content → plan-visual → execute）
+  - 文档强调了 PM Agent 的三层审查机制（资源完整性 + Prompt 质量 + Brief 一致性）
+  - 示例文件放在 examples/ 目录，方便用户参考
+  - 文档说明了三种图片模式的使用场景和效果差异
+  - CLI 命令说明包含了所有重要参数（--briefing, --pages, --style, --force, --regenerate 等）
+---
