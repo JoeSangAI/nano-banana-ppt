@@ -5,8 +5,8 @@ Auto Pipeline (RFC v2.2)
 输出目录: ~/Desktop/AI output/ppt/{date}_{project_name}/
   {date}_{project_name}.pptx   ← 最终交付的 PPTX
   content_plan.md              ← 内容大纲
-  master_plan.md               ← 视觉计划
-  plan.json                    ← 技术执行计划
+  visual_plan.md               ← 视觉计划
+  visual_plan.json             ← 技术执行计划
   template_assets/             ← 模板提取物
   slides/                      ← 生成的页面图片
 """
@@ -16,6 +16,7 @@ import json
 import logging
 import re
 from pathlib import Path
+from typing import Optional
 
 try:
     from dotenv import load_dotenv
@@ -87,14 +88,17 @@ from tools.nano_banana_ppt.agents.pm import PMAgent
 from tools.nano_banana_ppt.core.executor import execute_plan
 from tools.nano_banana_ppt.utils.llm_client import reset_session
 from tools.nano_banana_ppt.utils.review_plan import (
-    build_master_plan_from_content_plan,
+    build_visual_plan_from_content_plan,
     build_content_review_md,
     parse_review_md,
     derive_technical_plan,
     REVIEW_MD_FILENAME,
 )
+from tools.nano_banana_ppt.utils.plan_sync import sync_visual_plan
 from tools.nano_banana_ppt.utils.content_validator import validate_content_visual_consistency
 from tools.nano_banana_ppt.utils.doc_normalizer import normalize_content_plan, normalize_visual_plan, normalize_brief
+from tools.nano_banana_ppt.utils.compile_content_plan import compile_content_plan
+from tools.nano_banana_ppt.utils.provider_config import get_llm_api_base, get_llm_api_key
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -103,13 +107,85 @@ logger = logging.getLogger(__name__)
 DEFAULT_OUTPUT_BASE = Path.home() / "Desktop" / "AI output" / "ppt"
 
 
+def _sync_content_plan_json(project_dir: Path) -> Optional[Path]:
+    """根据 content_plan.md 刷新 content_plan.json。"""
+    content_md_path = project_dir / "content_plan.md"
+    if not content_md_path.exists():
+        return None
+
+    content_json_path = project_dir / "content_plan.json"
+    should_compile = (
+        not content_json_path.exists() or
+        content_json_path.stat().st_mtime < content_md_path.stat().st_mtime
+    )
+
+    if should_compile:
+        compile_content_plan(str(content_md_path), str(content_json_path))
+        print(f"✅ 已同步 content_plan.json: {content_json_path}")
+
+    return content_json_path
+
+
+def _sync_visual_plan_json(
+    project_dir: Path,
+    api_key: str,
+    api_base: Optional[str],
+    regenerate: bool = False,
+) -> Optional[Path]:
+    """根据 visual_plan.md 刷新 visual_plan.json。"""
+    review_md_path = project_dir / REVIEW_MD_FILENAME
+    if not review_md_path.exists():
+        return None
+
+    visual_plan_json_path = project_dir / "visual_plan.json"
+    should_compile = (
+        regenerate or
+        not visual_plan_json_path.exists() or
+        visual_plan_json_path.stat().st_mtime < review_md_path.stat().st_mtime
+    )
+
+    if not should_compile:
+        return visual_plan_json_path
+
+    existing_plan = None
+    if visual_plan_json_path.exists():
+        try:
+            with open(visual_plan_json_path, "r", encoding="utf-8") as f:
+                existing_plan = json.load(f)
+        except Exception:
+            existing_plan = None
+
+    with open(review_md_path, "r", encoding="utf-8") as f:
+        md_text = f.read()
+
+    parsed = parse_review_md(md_text, project_dir=str(project_dir))
+    if not parsed.get("pages"):
+        raise ValueError(f"无法从 {review_md_path} 解析出有效页面")
+
+    content_file = parsed.get("meta", {}).get("content_file", "")
+    plan_data = derive_technical_plan(
+        parsed,
+        str(project_dir),
+        content_file,
+        api_key,
+        api_base,
+        existing_plan=existing_plan,
+    )
+
+    with open(visual_plan_json_path, "w", encoding="utf-8") as f:
+        json.dump(plan_data, f, ensure_ascii=False, indent=2)
+
+    sync_visual_plan(str(visual_plan_json_path), str(review_md_path), record_history=False)
+    os.utime(visual_plan_json_path, None)
+
+    print(f"✅ 已同步 visual_plan.json: {visual_plan_json_path}")
+    return visual_plan_json_path
+
+
 def _resolve_project_dir(content_file: str, output_name: str = None) -> tuple[str, Path]:
     """根据内容文件或指定名称，生成项目名和项目目录"""
     from datetime import date
     date_prefix = date.today().strftime("%Y%m%d")
-
-    # 固定的输出目录
-    OUTPUT_BASE = Path.home() / "Desktop" / "AI output" / "ppt"
 
     # 如果用户指定了 output_name，直接使用
     if output_name:
@@ -146,7 +222,7 @@ def _resolve_project_dir(content_file: str, output_name: str = None) -> tuple[st
     else:
         dir_name = f"{date_prefix}_{name}"
 
-    project_dir = OUTPUT_BASE / dir_name
+    project_dir = DEFAULT_OUTPUT_BASE / dir_name
     project_dir.mkdir(parents=True, exist_ok=True)
     return name, project_dir
 
@@ -178,10 +254,10 @@ def generate_content_plan(content_file: str, template_file: str = None,
     if briefing:
         print(f"📝 用户意图 (Briefing): {briefing[:60]}{'...' if len(briefing) > 60 else ''}")
 
-    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    api_base = os.getenv("OPENAI_API_BASE") or "https://generativelanguage.googleapis.com/v1beta/openai"
+    api_key = get_llm_api_key()
+    api_base = get_llm_api_base()
     if not api_key:
-        print("❌ 错误: 请设置 OPENAI_API_KEY 或 GOOGLE_API_KEY 环境变量")
+        print("❌ 错误: 请设置 OPENAI_API_KEY 环境变量")
         return None
 
     # 初始化 PM Agent
@@ -344,6 +420,7 @@ def generate_content_plan(content_file: str, template_file: str = None,
     content_md_content = build_content_review_md(narrative_outline, meta)
     with open(content_md_path, "w", encoding='utf-8') as f:
         f.write(content_md_content)
+    _sync_content_plan_json(project_dir)
 
     print(f"\n{'='*60}")
     print(f"📋 内容草稿出来了，您看看文字和插图对不对？")
@@ -365,15 +442,15 @@ def generate_content_plan(content_file: str, template_file: str = None,
 def generate_visual_plan(plan_dir: str, style_preference: str = None):
     """
     Phase 1.5: 视觉规划阶段。
-    读取内容计划，生成设计系统和视觉主张，输出 master_plan.md。
+    读取内容计划，生成设计系统和视觉主张，输出 visual_plan.md。
     """
     project_dir = Path(plan_dir)
     state_file = project_dir / "_content_state.json"
-    review_md_path = project_dir / REVIEW_MD_FILENAME  # master_plan.md
+    review_md_path = project_dir / REVIEW_MD_FILENAME
 
     # 初始化 PM Agent（用于判断 Gate）
-    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    api_base = os.getenv("OPENAI_API_BASE") or "https://generativelanguage.googleapis.com/v1beta/openai"
+    api_key = get_llm_api_key()
+    api_base = get_llm_api_base()
     if api_key:
         from openai import OpenAI
         client = OpenAI(api_key=api_key, base_url=api_base)
@@ -469,10 +546,10 @@ def generate_visual_plan(plan_dir: str, style_preference: str = None):
     print(f"📂 项目目录: {project_dir}")
     print(f"🎨 风格偏好: {style_preference or 'AI 自动推导'}")
 
-    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    api_base = os.getenv("OPENAI_API_BASE") or "https://generativelanguage.googleapis.com/v1beta/openai"
+    api_key = get_llm_api_key()
+    api_base = get_llm_api_base()
     if not api_key:
-        print("❌ 错误: 请设置 OPENAI_API_KEY 或 GOOGLE_API_KEY 环境变量")
+        print("❌ 错误: 请设置 OPENAI_API_KEY 环境变量")
         return None
 
     # 支持 prompt_mode 参数 (verbose 或 minimal)
@@ -494,20 +571,26 @@ def generate_visual_plan(plan_dir: str, style_preference: str = None):
         style_config = {"description": style_desc_str, "palette": [], "mode": "ai_minting"}
 
     # Step 2: 为每页生成具体的「配图/画面」描述（Visual Director 提案）
-    print("\n📋 [Step 2/4] 正在生成每页视觉提案 (Visual Director)...\n⏳ 这可能需要 1-2 分钟...")
+    print("\n📋 [Step 2/5] 正在生成每页视觉提案 (Visual Director)...\n⏳ 这可能需要 1-2 分钟...")
     from tools.nano_banana_ppt.utils.review_plan import generate_per_slide_visual_suggestions
-    per_slide_suggestions = generate_per_slide_visual_suggestions(
+    per_slide_descriptions = generate_per_slide_visual_suggestions(
         narrative_outline, style_config, api_key, api_base
     )
-    if per_slide_suggestions:
-        print(f"✅ 已生成 {len(per_slide_suggestions)} 页的视觉描述")
-        for pnum, suggestion in sorted(per_slide_suggestions.items()):
+    if per_slide_descriptions:
+        print(f"✅ 已生成 {len(per_slide_descriptions)} 页的视觉描述")
+        for pnum, suggestion in sorted(per_slide_descriptions.items()):
             print(f"   P{pnum}: {suggestion[:60]}...")
     else:
         print("⚠️ 未生成视觉描述，将留空供用户补充")
 
+    for page in narrative_outline:
+        page_num = page.get("page_num")
+        if page_num in per_slide_descriptions:
+            page["visual_description"] = per_slide_descriptions[page_num]
+            page["visual_suggestion"] = per_slide_descriptions[page_num]
+
     # Step 3: 生成视觉主张 (Art Director Manifesto) — 仅供用户审阅
-    print("\n📋 [Step 3/4] 正在生成视觉主张 (Art Director Manifesto)...")
+    print("\n📋 [Step 3/5] 正在生成视觉主张 (Art Director Manifesto)...")
     from tools.nano_banana_ppt.utils.review_plan import generate_design_manifesto
 
     is_template_mode = bool(meta.get("template_file"))
@@ -532,31 +615,57 @@ def generate_visual_plan(plan_dir: str, style_preference: str = None):
     with open(state_file, 'w', encoding='utf-8') as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
 
-    # Step 4: 生成人类可审阅的 master_plan.md
-    print("\n📋 [Step 4/4] 正在生成完整审阅计划...")
+    # Step 4: 生成最终执行提示词（将成为 visual_plan.md / visual_plan.json 的单一事实来源）
+    print("\n🧠 [Step 4/5] 正在生成最终执行提示词 (Final Visual Prompts)...\n⏳ 这可能需要 1-2 分钟...")
+    style_config_with_manifesto = dict(style_config)
+    style_config_with_manifesto["manifesto"] = manifesto_text
+    generated_slides = visual_agent.generate_visual_plan(
+        narrative_outline=narrative_outline,
+        style_definition_tuple=(style_config_with_manifesto.get("description", style_desc_str), style_config_with_manifesto),
+        assets={"logo_path": meta.get("logo_file")},
+        template_info=template_info,
+    )
+
+    # Step 5: 生成人类可审阅的 visual_plan.md 与 visual_plan.json
+    print("\n📋 [Step 5/5] 正在生成完整审阅计划...")
     content_md_path_str = str(content_md_path) if content_md_path.exists() else None
+    meta["content_file"] = meta.get("content_file") or str(content_md_path)
     if content_md_path_str:
-        review_md_content = build_master_plan_from_content_plan(
+        review_md_content = build_visual_plan_from_content_plan(
             content_md_path_str, style_config, meta,
             manifesto=manifesto_text,
-            per_slide_suggestions=per_slide_suggestions,
+            per_slide_descriptions=per_slide_descriptions,
             state_narrative_outline=state_narrative_outline,  # 传入原始 outline（包含 native_images）
+            generated_slides=generated_slides,
         )
     else:
         raise FileNotFoundError(f"content_plan.md 不存在: {content_md_path}。请先运行 plan-content。")
     with open(review_md_path, "w", encoding='utf-8') as f:
         f.write(review_md_content)
 
+    parsed_review = parse_review_md(review_md_content, project_dir=str(project_dir))
+    visual_plan_data = derive_technical_plan(
+        parsed_review,
+        str(project_dir),
+        meta.get("content_file", str(content_md_path)),
+        api_key,
+        api_base,
+    )
+    visual_plan_json_path = project_dir / "visual_plan.json"
+    with open(visual_plan_json_path, "w", encoding="utf-8") as f:
+        json.dump(visual_plan_data, f, ensure_ascii=False, indent=2)
+
     print(f"\n{'='*60}")
     print(f"📋 视觉计划已就绪，已保存: {review_md_path}")
-    print(f"   请重点审阅每页的【配图/画面】描述，可直接编辑修改。")
+    print(f"📦 执行计划已同步: {visual_plan_json_path}")
+    print(f"   请重点审阅每页的【配图/画面】与【最终执行提示词】。")
     print(f"{'='*60}")
 
     print(f"\n{'='*60}")
     print(f"⛔ STOP — 请审阅 {REVIEW_MD_FILENAME} 后再继续！")
     print(f"   必须先让用户审阅：")
     print(f"   ① 视觉主张和配色方案（Design Manifesto）")
-    print(f"   ② 每页的配图/画面描述（VisualDirector 已生成，可直接审阅或修改）")
+    print(f"   ② 每页的配图/画面描述和最终执行提示词是否符合预期")
     print(f"{'='*60}")
 
     # 实际阻塞等待确认（非交互环境返回 "BLOCKED"）
@@ -566,10 +675,10 @@ def generate_visual_plan(plan_dir: str, style_preference: str = None):
 ═══════════════════════════════════════════════════════
 ⛔ GATE 2 — 已拦截，需人工确认
 ═══════════════════════════════════════════════════════
-   master_plan.md 已生成（第 1 页有完整审阅说明）。
+   visual_plan.md 已生成（第 1 页有完整审阅说明）。
 
    请将以下内容呈现给用户：
-   ① 确认已审阅 master_plan.md
+   ① 确认已审阅 visual_plan.md
    ② 确认后可回答"继续"我来执行，或回答"preview 1-2"
      我会用 prototype 先跑 1-2 页给您确认风格。
 ═══════════════════════════════════════════════════════
@@ -603,13 +712,13 @@ def _resolve_execute_input(path_arg: str) -> tuple:
         return None, None, False
     if p.is_dir():
         review_md = p / REVIEW_MD_FILENAME
-        plan_json = p / "plan.json"
-        # 优先使用 master_plan.md（用户审阅确认的），确保生成内容与大纲一致
+        visual_plan_json = p / "visual_plan.json"
+        # 优先使用 visual_plan.md（用户审阅确认的），确保生成内容与大纲一致
         if review_md.exists():
             return str(review_md), str(p), True
-        if plan_json.exists():
-            return str(plan_json), str(p), False
-        print(f"❌ 目录中未找到 {REVIEW_MD_FILENAME} 或 plan.json")
+        if visual_plan_json.exists():
+            return str(visual_plan_json), str(p), False
+        print(f"❌ 目录中未找到 {REVIEW_MD_FILENAME} 或 visual_plan.json")
         return None, None, False
     if p.suffix.lower() == ".md":
         name = Path(p).stem
@@ -621,13 +730,13 @@ def _resolve_execute_input(path_arg: str) -> tuple:
         return str(p), str(project_dir), True
     if p.suffix.lower() == ".json":
         return str(p), str(p.parent), False
-    print("❌ 请传入 master_plan.md、plan.json 或项目目录")
+    print("❌ 请传入 visual_plan.md、visual_plan.json 或项目目录")
     return None, None, False
 
 
 def build_content_only_prototype_pptx(project_dir: str, output_name: str = None) -> str:
     """
-    仅根据 master_plan.md 生成纯文字打样 PPT（不生成生图提示词、不调用生图 API）。
+    仅根据 visual_plan.md 生成纯文字打样 PPT（不生成生图提示词、不调用生图 API）。
     每页包含：标题、副标题（如有）、正文、演讲备注。
     """
     from pptx import Presentation
@@ -644,7 +753,7 @@ def build_content_only_prototype_pptx(project_dir: str, output_name: str = None)
 
     pages = parsed.get("pages", [])
     if not pages:
-        print("❌ 解析 master_plan 未得到任何页面")
+        print("❌ 解析 visual_plan 未得到任何页面")
         return None
 
     name = output_name or Path(project_dir).name
@@ -761,16 +870,15 @@ def _auto_select_prototype_seeds(plan_input: str) -> list:
 def execute_from_plan(plan_input: str, output_name: str = None, resolution: str = "1K", slide_filter: list = None, reassemble_only: bool = False, regenerate: bool = False, no_blend: bool = False, force: bool = False):
     """
     Phase 2: 执行阶段。
-    接受 REVIEW_MD_FILENAME 或 plan.json 路径，或包含它们的目录，进行最终的图文生成与组装。
+    接受 REVIEW_MD_FILENAME 或 visual_plan.json 路径，或包含它们的目录，进行最终的图文生成与组装。
 
-    plan.json 复用策略：
-    - 若 plan.json 已存在且未指定 --regenerate，则直接复用（无论全量还是补跑）
-    - 若 plan.json 不存在，或指定了 --regenerate，则从 master_plan.md 重新派生
-    - 派生现在是模板拼接方式（无 LLM 调用，即时完成）
+    visual_plan.json 复用策略：
+    - 若 visual_plan.json 已存在且未指定 --regenerate，则直接复用（无论全量还是补跑）
+    - 若 visual_plan.json 不存在，或指定了 --regenerate，则从 visual_plan.md 重新派生
     """
     # 获取 API 配置
-    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    api_base = os.getenv("OPENAI_API_BASE")
+    api_key = get_llm_api_key()
+    api_base = get_llm_api_base()
 
     plan_path, proj_dir, from_review = _resolve_execute_input(plan_input)
     if not plan_path:
@@ -811,22 +919,12 @@ def execute_from_plan(plan_input: str, output_name: str = None, resolution: str 
             else:
                 print("✅ visual_plan.md 格式正确")
 
-        # PM 最终意图审查
-        if not force:
-            print("\n🔍 PM Agent 正在执行最终意图审查...")
-            review_report = pm_agent.final_intent_review()
-            if not review_report["passed"]:
-                print(f"\n❌ 最终审查未通过，发现 {review_report['summary']['blocking_issues']} 个阻塞问题")
-                print("   请修复问题后再执行，或使用 --force 跳过审查")
-                return None
-            print("✅ 最终审查通过，可以执行")
-
     # GATE 2: 在非交互模式下，如果没有通过确认流程，则阻止直接执行
     if from_review and not sys.stdin.isatty() and not force:
         print("""
 ⚠️  执行保护：检测到您直接运行 execute 命令（未经过审阅确认流程）。
 
-   master_plan.md 已生成，请确认：
+   visual_plan.md 已生成，请确认：
    ① 内容是否已审阅？
    ② 是否需要用 prototype 预览 1-2 页后再全量生成？
 
@@ -835,7 +933,24 @@ def execute_from_plan(plan_input: str, output_name: str = None, resolution: str 
 """.format(proj_dir=proj_dir))
         return None
 
-    plan_json_path = Path(proj_dir) / "plan.json"
+    visual_plan_json_path = Path(proj_dir) / "visual_plan.json"
+
+    if proj_dir:
+        project_path = Path(proj_dir)
+        _sync_content_plan_json(project_path)
+
+    review_md = Path(proj_dir) / REVIEW_MD_FILENAME
+    if api_key and review_md.exists():
+        _sync_visual_plan_json(Path(proj_dir), api_key, api_base, regenerate=regenerate)
+
+    if pm_agent and not force:
+        print("\n🔍 PM Agent 正在执行最终意图审查...")
+        review_report = pm_agent.final_intent_review()
+        if not review_report["passed"]:
+            print(f"\n❌ 最终审查未通过，发现 {review_report['summary']['blocking_issues']} 个阻塞问题")
+            print("   请修复问题后再执行，或使用 --force 跳过审查")
+            return None
+        print("✅ 最终审查通过，可以执行")
 
     # 问题4: 内容一致性校验
     if not force:
@@ -849,56 +964,15 @@ def execute_from_plan(plan_input: str, output_name: str = None, resolution: str 
         else:
             print("\n✅ 内容一致性校验通过")
 
-    # 智能检测文件修改时间，自动决定是否需要重新生成
-    use_existing_plan = False
-    if plan_json_path.exists() and not regenerate:
-        if from_review:
-            md_mtime = Path(plan_path).stat().st_mtime
-            json_mtime = plan_json_path.stat().st_mtime
-            if json_mtime > md_mtime:
-                use_existing_plan = True
-                print("\n📄 复用已有 plan.json（比 master_plan.md 更新）")
-            else:
-                print("\n📄 检测到 master_plan.md 已更新，重新生成 plan.json")
-        else:
-            use_existing_plan = True
-            print("\n📄 复用已有 plan.json（如需重新生成提示词，请加 --regenerate 参数）")
-
     if from_review:
-        if use_existing_plan:
-            plan_path = str(plan_json_path)
+        if visual_plan_json_path.exists():
+            plan_path = str(visual_plan_json_path)
         else:
-            reset_session()
-            print("\n📄 正在从 master_plan.md 派生技术计划（模板拼接，无 LLM 调用）...")
-            with open(plan_path, "r", encoding="utf-8") as f:
-                md_text = f.read()
-            parsed = parse_review_md(md_text)
-            if not parsed.get("pages"):
-                print("❌ 解析失败，未找到有效页面")
-                return None
-            pmeta = parsed.get("meta", {})
-            content_file = pmeta.get("content_file", "")
-            plan_data = derive_technical_plan(parsed, proj_dir, content_file, api_key, api_base)
-            with open(plan_json_path, "w", encoding="utf-8") as f:
-                json.dump(plan_data, f, ensure_ascii=False, indent=2)
-            print(f"✅ 技术计划已保存: {plan_json_path}")
-            plan_path = str(plan_json_path)
+            print(f"❌ 缺少 visual_plan.json，无法继续执行")
+            return None
     else:
-        # 直接传入 plan.json 时：如果 master_plan.md 也存在且 plan.json 需要重新生成
-        review_md = Path(proj_dir) / REVIEW_MD_FILENAME
-        if review_md.exists() and not use_existing_plan:
-            print("\n📄 正在从 master_plan.md 重新派生技术计划...")
-            with open(review_md, "r", encoding="utf-8") as f:
-                md_text = f.read()
-            parsed = parse_review_md(md_text)
-            if parsed.get("pages"):
-                pmeta = parsed.get("meta", {})
-                content_file = pmeta.get("content_file", "")
-                plan_data = derive_technical_plan(parsed, proj_dir, content_file, api_key, api_base)
-                with open(plan_json_path, "w", encoding="utf-8") as f:
-                    json.dump(plan_data, f, ensure_ascii=False, indent=2)
-                print(f"✅ 技术计划已更新并保存: {plan_json_path}")
-                plan_path = str(plan_json_path)
+        if visual_plan_json_path.exists():
+            plan_path = str(visual_plan_json_path)
 
     with open(plan_path, 'r', encoding='utf-8') as f:
         plan_data = json.load(f)
@@ -971,7 +1045,7 @@ def _prompt_user(message: str, default_yes: bool = True) -> bool | str:
 
 
 def _interactive_rerun_prompt(plan_input: str, output_name: str, resolution: str, project_dir: str = None):
-    """生成完成后，交互式询问是否需要重跑部分页面。rerun 使用 project_dir 以命中 plan.json"""
+    """生成完成后，交互式询问是否需要重跑部分页面。rerun 使用 project_dir 以命中 visual_plan.json。"""
     print("\n" + "=" * 50)
     print("是否需要重跑部分页面？")
     print("  输入页号（如 3 5 7 或 3,5,7），直接回车跳过")
@@ -1017,7 +1091,7 @@ def auto_generate_ppt(content_file: str, template_file: str = None,
     if not plan_file:
         return
 
-    if not _prompt_user("请审阅 master_plan.md，确认制作蓝图无误后继续执行生图？"):
+    if not _prompt_user("请审阅 visual_plan.md，确认制作蓝图无误后继续执行生图？"):
         print(f"\n⏸️  已停止。请审阅后手动执行下一步：")
         print(f"   python -m tools.nano_banana_ppt.main execute \"{project_dir}\"")
         return
@@ -1050,10 +1124,10 @@ def execute_upscale(proj_dir: str, resolution: str, slide_filter: list = None):
     if slide_filter:
         print(f"📑 仅放大指定页面: {slide_filter}")
         
-    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    api_base = os.getenv("OPENAI_API_BASE")
+    api_key = get_llm_api_key()
+    api_base = get_llm_api_base()
     if not api_key:
-        print("❌ 未设置 OPENAI_API_KEY 或 GOOGLE_API_KEY")
+        print("❌ 未设置 OPENAI_API_KEY")
         return False
 
     from tools.nano_banana_ppt.core.generator import PPTGenerator
@@ -1120,14 +1194,14 @@ Nano Banana 2 PPT Generator
   # Phase 1: 内容规划（生成 content_plan.md 供大纲审阅）
   python -m tools.nano_banana_ppt.main plan-content <content_file> [template_file] [logo_file] [output_name] [--pages N]
 
-  # Phase 1.5: 制作蓝图（生成 master_plan.md 包含内容+风格+视觉主张）
+  # Phase 1.5: 制作蓝图（生成 visual_plan.md 包含内容+风格+视觉主张）
   python -m tools.nano_banana_ppt.main plan-visual <项目目录> [--style "风格描述或预设名称"]
 
   # Prototype: 快速原型验证（仅生成前两页或指定页）；加 --content-only 则仅生成纯文字打样（不生图、不生成生图提示词）
   python -m tools.nano_banana_ppt.main prototype <项目目录或plan文件> [output_name] [--slides 1 2] [--resolution 1K|2K|4K] [--content-only]
 
   # Phase 2: 执行计划（生图 + 组装 PPTX）
-  # 可传入项目目录、master_plan.md 或 plan.json
+  # 可传入项目目录、visual_plan.md 或 visual_plan.json
   python -m tools.nano_banana_ppt.main execute <项目目录或plan文件> [output_name] [--resolution 1K|2K|4K] [--slides 3 5 7] [--reassemble] [--force]
 
   # Upscale: 后置高保真放大 (1K -> 2K/4K)
@@ -1143,7 +1217,7 @@ Nano Banana 2 PPT Generator
   --resolution  分辨率，1K|2K|4K，默认 1K
   --slides      仅重跑指定页号，如 --slides 3 5 7
   --reassemble  仅从已有 slides 重新组装 PPTX，不生成新图（用于修复布局问题）
-  --regenerate  强制重新从 master_plan.md 派生 plan.json（覆盖已有缓存）
+  --regenerate  强制重新从 visual_plan.md 派生 visual_plan.json（覆盖已有缓存）
   --no-blend    跳过原生图片的 Blend Pass（打样阶段加速用，不影响最终质量）
   --force       跳过执行保护确认（在非交互模式下绕过 GATE 2 警告）
 
@@ -1154,8 +1228,8 @@ Nano Banana 2 PPT Generator
   ~/Desktop/AI output/ppt/{date}_{name}/
     {date}_{name}.pptx               ← 最终交付的 PPTX
     content_plan.md                  ← 内容草稿（Phase 1.1 生成）
-    master_plan.md                   ← 制作蓝图（Phase 1.5 生成，含内容+视觉）
-    plan.json                        ← 技术计划
+    visual_plan.md                   ← 制作蓝图（Phase 1.5 生成，含内容+视觉）
+    visual_plan.json                 ← 技术计划
     template_assets/                 ← 模版提取物
     slides/                          ← 生成的页面图片
 """)
@@ -1307,7 +1381,7 @@ if __name__ == "__main__":
             # 仅生成打样 PPT 内容（纯文字），不生成生图提示词、不调用生图 API
             plan_path, proj_dir, _ = _resolve_execute_input(pf)
             if not plan_path or not proj_dir:
-                print("❌ 无法解析项目目录或 master_plan.md")
+                print("❌ 无法解析项目目录或 visual_plan.md")
                 sys.exit(1)
             print("\n🚀 Nano Banana 2 — 内容打样（仅文字，不生图）")
             build_content_only_prototype_pptx(proj_dir, output_name or Path(proj_dir).name)

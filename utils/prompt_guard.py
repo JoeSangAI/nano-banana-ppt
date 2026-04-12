@@ -13,7 +13,11 @@ from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 import json
 
+from .provider_config import DEFAULT_LLM_MODEL
+from .prompt_spec import format_prompt_sections
+
 logger = logging.getLogger(__name__)
+VALID_IMAGE_MODES = ("INTENT_FUSION", "ELEMENT_PRESERVE", "ORIGINAL_PRESENT")
 
 
 class CheckIssue:
@@ -46,7 +50,7 @@ class ReviewReport:
     """审查报告"""
     def __init__(self):
         self.issues: List[CheckIssue] = []
-        self.patches: Dict[int, str] = {}  # page_number -> improved_prompt
+        self.patches: Dict[str, str] = {}  # "{page_number}:{image_index}" -> improved_prompt
         self.stats = {
             "total_pages": 0,
             "checked_pages": 0,
@@ -67,9 +71,9 @@ class ReviewReport:
         else:
             self.stats["infos"] += 1
 
-    def add_patch(self, page_number: int, improved_prompt: str):
+    def add_patch(self, page_number: int, image_index: int, improved_prompt: str):
         """添加改进后的 prompt"""
-        self.patches[page_number] = improved_prompt
+        self.patches[f"{page_number}:{image_index}"] = improved_prompt
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -164,9 +168,7 @@ def review_visual_plan(
                 for issue in issues:
                     report.add_issue(issue)
                 for img_idx, improved_prompt in improved_prompts.items():
-                    # 为每张图片生成唯一的 key
-                    patch_key = f"{page_num}_{img_idx}"
-                    report.add_patch(page_num, improved_prompt)
+                    report.add_patch(page_num, img_idx, improved_prompt)
                 report.stats['deep_checked'] += 1
 
     report.stats['checked_pages'] = report.stats['light_checked'] + report.stats['deep_checked']
@@ -218,8 +220,8 @@ def _light_check_page(
                 suggestion="需要补充实际图片路径"
             ))
 
-        # 检查 visual_prompt 是否为空
-        visual_prompt = img.get('visual_prompt', '').strip()
+        # 检查 final_visual_prompt 是否为空（兼容旧字段 visual_prompt）
+        visual_prompt = (img.get('final_visual_prompt') or img.get('visual_prompt', '')).strip()
         if not visual_prompt:
             issues.append(CheckIssue(
                 page_number=page_num,
@@ -231,14 +233,13 @@ def _light_check_page(
 
         # 检查 mode 是否合法
         mode = img.get('mode', '')
-        valid_modes = ['INTENT_FUSION', 'ELEMENT_PRESERVE', 'ORIGINAL_PRESENT']
-        if mode not in valid_modes:
+        if mode not in VALID_IMAGE_MODES:
             issues.append(CheckIssue(
                 page_number=page_num,
                 severity="error",
                 category="technical",
                 message=f"图片 {img_idx + 1} 的 mode 不合法：{mode}",
-                suggestion=f"mode 必须是以下之一：{', '.join(valid_modes)}"
+                suggestion=f"mode 必须是以下之一：{', '.join(VALID_IMAGE_MODES)}"
             ))
 
         # 检查 visual_prompt 长度（过短或过长都可能有问题）
@@ -282,7 +283,7 @@ def _deep_check_page(
     images = page.get('images', [])
 
     for img_idx, img in enumerate(images):
-        visual_prompt = img.get('visual_prompt', '').strip()
+        visual_prompt = (img.get('final_visual_prompt') or img.get('visual_prompt', '')).strip()
         if not visual_prompt:
             continue
 
@@ -349,7 +350,7 @@ def _review_single_prompt(
 
     # 调用 LLM
     response = llm_client.chat.completions.create(
-        model="gemini-2.0-flash-exp",  # 使用快速模型进行审阅
+        model=DEFAULT_LLM_MODEL,
         messages=[
             {"role": "system", "content": _get_review_system_prompt()},
             {"role": "user", "content": review_prompt}
@@ -369,60 +370,45 @@ def _review_single_prompt(
 
 def _get_review_system_prompt() -> str:
     """获取审阅系统 prompt（从 ReviewerAgent 迁移）"""
-    return """你是一位资深视觉设计师兼 PPT 艺术总监。你的任务是对 visual prompt 进行严格审阅和改进。
+    required_sections = format_prompt_sections()
+    return f"""你是一位资深视觉设计师兼 PPT 艺术总监。你的任务是对执行 prompt 进行严格审阅和轻量优化。
 
-## 你的 6 大审阅维度
+## 审阅重点
 
-### 1. 风格守门人
-确保 prompt 忠于全局风格定义：
-- 纸艺技法是否统一？（剪影、纸雕、层叠纸片，而不是写实插画、卡通）
-- 色彩系统是否在调色板内？
-- 字体系统是否统一（Caveat/Kalam/Patrick Hand）？
-- 光照和质感是否统一（暖黄灯光、手工纸张）？
+### 1. 结构完整
+确保 prompt 保留以下关键结构：
+{required_sections}
 
-### 2. 内容翻译官
-确保原文意图被准确翻译：
-- TEXT TO RENDER 中的文字是否与原文完全一致？
-- VISUAL SCENE 是否准确传达了 visual_suggestion 的创意？
-- 关键细节是否被强调（如"句号 vs 逗号"的对比）？
-- 情感核心是否被准确传达？
+### 2. 文字正确
+确保：
+- TEXT TO RENDER 中的文字与批准内容完全一致
+- 不删减、不改写、不翻译、不补写
+- 中文主文字强调正常、清晰、稳定渲染
 
-### 3. 技术质检员
-确保 prompt 技术上可执行：
-- 构图是否是 16:9 全屏？（不是独立的卡片、海报浮在中间）
-- TEXT TO RENDER 和 VISUAL SCENE 是否有文字重复？
-- 是否有矛盾的指令（如"不要有文字"但又要求渲染文字）？
-- 描述是否过于复杂导致模型无法执行？
+### 3. 视觉忠实
+确保：
+- VISUAL SCENE 忠于当前页 visual description
+- 当前页语义优先于 seed/reference
+- seed 只控制视觉语法，不控制具体内容
 
-### 4. 叙事编辑
-确保页面在整体叙事中连贯：
-- 与前后页的视觉过渡是否自然？
-- 这一页的情感基调是否与内容匹配？
-- 章节间的视觉区分是否恰当？
+### 4. 一致性
+确保：
+- 风格、配色、字体系统与整套 deck 一致
+- 主文字字体系统稳定，不逐页漂移
 
-### 5. 精简大师
-确保 prompt 精简准确无冗余：
-- 是否有重复的描述？
-- 是否有模糊或歧义的表达？
-- 是否用最少的字表达最准确的意思？
+### 5. 可执行性
+确保：
+- 指令无冲突
+- 负向约束聚焦高价值故障
+- 不因过度啰嗦而稀释重点
 
-### 6. 情感共鸣者
-确保视觉表达能打动人：
-- 这一页的情感基调是否正确？
-- 关键情节是否被视觉强化？
-- 是否有画龙点睛的视觉细节？
-
-## 你的工作方式
-
-1. 仔细阅读输入的 visual prompt 和相关内容
-2. 从上述 6 个维度逐一审阅
-3. 识别问题并进行改进
-4. 输出改进后的 prompt
+### 6. 精简优化
+如果 prompt 已经足够好，可以原样返回。
+如果需要修改，只做必要的小幅优化，优先删除重复、冲突和低价值废话。
 
 ## 输出格式
 
-直接输出改进后的 visual prompt，不要有任何解释或评论。
-输出必须是纯文本，不是 JSON 或 markdown。"""
+直接输出改进后的完整 prompt，不要解释，不要评论，不要 JSON，不要 markdown。"""
 
 
 def _build_review_prompt(
@@ -441,23 +427,25 @@ def _build_review_prompt(
 图片作用: {img_role}
 图片模式: {img_mode}
 
-## 当前的 visual prompt（需要审阅）
+## 当前执行 prompt（需要审阅）
 {visual_prompt}
 
 ## 风格配置
 调色板: {', '.join(palette) if palette else '(未定义)'}
 字体: {', '.join(fonts) if fonts else '(未定义)'}
 
-## 你的审阅任务
-请从 6 个维度审阅上述 visual prompt，识别问题并进行改进。
-输出改进后的 visual prompt。
+## 审阅任务
+请审阅上述执行 prompt，重点检查：
+- 结构是否完整
+- 文字是否准确
+- 中文主文字规则是否清晰
+- style / seed / reference 的边界是否清楚
+- 是否有冗余、冲突、废话
 
-## 重要提醒
-- 构图必须是 16:9 全屏，不能是独立的卡片或海报
-- 保持精简，删除冗余描述
-- 保留并强化关键的情感细节
+如果需要优化，请输出改进后的完整 prompt。
+如果已经足够好，可以直接原样返回。
 
-直接输出改进后的 visual prompt："""
+直接输出改进后的完整 prompt："""
 
     return prompt
 
@@ -534,7 +522,7 @@ def print_review_report(report: ReviewReport):
     # 改进建议
     if report.patches:
         print(f"\n📝 改进建议:")
-        print(f"  共 {len(report.patches)} 个页面有优化后的 prompt")
+        print(f"  共 {len(report.patches)} 个 prompt 有优化版本")
         print(f"  可以使用这些改进后的 prompt 替换原 prompt")
 
     print("\n" + "=" * 60 + "\n")

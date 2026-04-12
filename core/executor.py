@@ -20,6 +20,7 @@ from tools.nano_banana_ppt.core.data_visualizer import render_chart_image
 from tools.nano_banana_ppt.core.failure_classifier import (
     classify_failure, generate_failure_summary, FailureReport, FailureType, FailureSeverity
 )
+from tools.nano_banana_ppt.utils.provider_config import get_llm_api_base, get_llm_api_key
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -27,9 +28,34 @@ logger = logging.getLogger(__name__)
 # 页面类型家族常量
 CONTENT_FAMILY = {'content', 'framework', 'flowchart', 'comparison', 'data', 'toc', 'breathing', 'infographic'}
 BOOKEND_FAMILY = {'cover', 'back', 'ending'}
+POSITION_BOUNDING_BOXES = {
+    "full": {"left": 0.0, "top": 0.0, "width": 1.0, "height": 1.0},
+    "center": {"left": 0.2, "top": 0.2, "width": 0.6, "height": 0.6},
+    "left": {"left": 0.0, "top": 0.2, "width": 0.4, "height": 0.6},
+    "right": {"left": 0.6, "top": 0.2, "width": 0.4, "height": 0.6},
+    "top": {"left": 0.2, "top": 0.0, "width": 0.6, "height": 0.4},
+    "bottom": {"left": 0.2, "top": 0.6, "width": 0.6, "height": 0.4},
+}
+MODE_RESERVED_REGIONS = {
+    "ELEMENT_PRESERVE": {"x": 0.2, "y": 0.2, "width": 0.6, "height": 0.6},
+    "ORIGINAL_PRESENT": {"x": 0.05, "y": 0.05, "width": 0.9, "height": 0.9},
+}
 
 # 并发生成时最大工作线程数，避免 API 限流
 MAX_PARALLEL_WORKERS = 2  # Reduced from 3 to 2 for better stability
+
+
+def _infer_seed_family(slide_type: str) -> Optional[str]:
+    slide_type = (slide_type or "content").strip().lower()
+    if slide_type == "background_only":
+        return "background_only"
+    if slide_type == "section":
+        return "section"
+    if slide_type in {"cover", "back", "ending", "hero", "quote"}:
+        return "hero"
+    if slide_type in CONTENT_FAMILY or slide_type not in BOOKEND_FAMILY:
+        return "content"
+    return None
 
 
 def _convert_new_format_to_slides(pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -48,7 +74,7 @@ def _convert_new_format_to_slides(pages: List[Dict[str, Any]]) -> List[Dict[str,
                         "mode": "INTENT_FUSION",
                         "role": "装饰图片",
                         "position": "center",
-                        "visual_prompt": "生成的完整 prompt"
+                        "final_visual_prompt": "生成的完整 prompt"
                     }
                 ]
             }
@@ -60,7 +86,7 @@ def _convert_new_format_to_slides(pages: List[Dict[str, Any]]) -> List[Dict[str,
         {
             "page_num": 1,
             "type": "content",
-            "visual_prompt": "...",
+            "final_visual_prompt": "...",
             "native_images": [...]
         }
     ]
@@ -84,7 +110,7 @@ def _convert_new_format_to_slides(pages: List[Dict[str, Any]]) -> List[Dict[str,
             mode = img.get("mode", "INTENT_FUSION")
             role = img.get("role", "")
             position = img.get("position", "center")
-            visual_prompt = img.get("visual_prompt", "")
+            visual_prompt = img.get("final_visual_prompt", img.get("visual_prompt", ""))
 
             # 跳过占位符
             if path == "PLACEHOLDER":
@@ -103,9 +129,10 @@ def _convert_new_format_to_slides(pages: List[Dict[str, Any]]) -> List[Dict[str,
         slide = {
             "page_num": page_num,
             "type": page_type,
-            "visual_prompt": "\n\n".join(visual_prompt_parts) if visual_prompt_parts else f"Page {page_num}: {title}",
+            "final_visual_prompt": "\n\n".join(visual_prompt_parts) if visual_prompt_parts else f"Page {page_num}: {title}",
             "native_images": native_images
         }
+        slide["visual_prompt"] = slide["final_visual_prompt"]
 
         slides.append(slide)
 
@@ -146,35 +173,21 @@ def _build_native_image_entry(path: str, mode: str, role: str, position: str) ->
     if not path or path == "PLACEHOLDER":
         return None
 
+    normalized_mode = str(mode or "INTENT_FUSION").upper()
+    if normalized_mode not in {"INTENT_FUSION", "ELEMENT_PRESERVE", "ORIGINAL_PRESENT"}:
+        normalized_mode = "INTENT_FUSION"
+
     # 统一使用 blend 模式
     entry = {
         "path": path,
         "integration_mode": "blend",
-        "semantic_role": role or "subject"
+        "semantic_role": role or "subject",
+        "mode": normalized_mode,
     }
 
-    # 根据模式调整 blend_reserved_region
-    if mode == "INTENT_FUSION":
-        # 意向融合：不设置保留区域，允许完全重绘
-        pass
-
-    elif mode == "ELEMENT_PRESERVE":
-        # 元素保留：设置中等保留区域（保留主体）
-        entry["blend_reserved_region"] = {
-            "x": 0.2,
-            "y": 0.2,
-            "width": 0.6,
-            "height": 0.6
-        }
-
-    elif mode == "ORIGINAL_PRESENT":
-        # 原图呈现：设置全图保留区域（最小化改动）
-        entry["blend_reserved_region"] = {
-            "x": 0.05,
-            "y": 0.05,
-            "width": 0.9,
-            "height": 0.9
-        }
+    reserved_region = MODE_RESERVED_REGIONS.get(normalized_mode)
+    if reserved_region:
+        entry["blend_reserved_region"] = dict(reserved_region)
 
     # 根据 position 调整 bounding_box（用于布局提示）
     entry["bounding_box"] = _position_to_bounding_box(position)
@@ -184,15 +197,7 @@ def _build_native_image_entry(path: str, mode: str, role: str, position: str) ->
 
 def _position_to_bounding_box(position: str) -> Dict[str, float]:
     """将位置描述转换为 bounding_box"""
-    position_map = {
-        "full": {"x": 0.0, "y": 0.0, "width": 1.0, "height": 1.0},
-        "center": {"x": 0.2, "y": 0.2, "width": 0.6, "height": 0.6},
-        "left": {"x": 0.0, "y": 0.2, "width": 0.4, "height": 0.6},
-        "right": {"x": 0.6, "y": 0.2, "width": 0.4, "height": 0.6},
-        "top": {"x": 0.2, "y": 0.0, "width": 0.6, "height": 0.4},
-        "bottom": {"x": 0.2, "y": 0.6, "width": 0.6, "height": 0.4},
-    }
-    return position_map.get(position, position_map["center"])
+    return dict(POSITION_BOUNDING_BOXES.get(position, POSITION_BOUNDING_BOXES["center"]))
 
 
 def _generate_single_slide(slide, visual_plan, slides_dir, generator, resolution, masters, clean_background_image=None, project_dir=None, retry_count=0):
@@ -225,7 +230,7 @@ def _generate_single_slide(slide, visual_plan, slides_dir, generator, resolution
             })
             raise e
 
-    prompt = slide['visual_prompt']
+    prompt = slide.get('final_visual_prompt') or slide.get('visual_prompt', '')
     reference_images = []
 
     # 1. 尝试加载显式指定的模版参考图（支持单张或多张）
@@ -254,22 +259,21 @@ def _generate_single_slide(slide, visual_plan, slides_dir, generator, resolution
                     logger.error(f"素材错误（不可重试）: {failure.error_message}")
                     raise e
 
-    # 2. 如果没有模版参考图，尝试使用同类型的母版 (AI Minting Consistency)
-    # framework/flowchart/comparison/data/toc/breathing 均属于「内容信息页」，
-    # 共享 content 母版，确保整套 PPT 视觉语言统一
-    if not reference_images:
-        p_type = slide.get('type')
-        if p_type in CONTENT_FAMILY:
-            master_img = masters.get('content')
-        elif p_type == 'section':
-            master_img = masters.get('section')
-        elif p_type == 'hero':
-            master_img = masters.get('hero')
-        else:
-            master_img = None
-            
-        if master_img:
-            reference_images = [master_img]
+    seed_family = _infer_seed_family(slide.get('type'))
+    if seed_family in masters and slide.get('seed_role') != 'family_seed' and masters.get(seed_family) is not None:
+        try:
+            seed_reference = masters[seed_family]
+            if hasattr(seed_reference, "copy"):
+                seed_reference = seed_reference.copy()
+            reference_images.insert(0, seed_reference)
+            prompt += (
+                f"\n\nCRITICAL INSTRUCTION: An attached {seed_family} seed slide is provided as a VISUAL GRAMMAR reference. "
+                "Use it only to inherit palette behavior, typography feel, spacing rhythm, material treatment, and composition discipline. "
+                "Do NOT copy or imitate its specific text, subject matter, scene, infographic skeleton, icon cluster, or unique metaphor. "
+                "The current slide's approved content and text always override the seed reference."
+            )
+        except Exception as e:
+            logger.warning(f"无法附加 {seed_family} 种子页参考图: {e}")
 
     is_background_only = slide.get('type') == 'background_only'
     
@@ -355,8 +359,12 @@ def execute_plan(plan_file: str, output_name: str = "Final_Presentation",
     with open(plan_file, 'r', encoding='utf-8') as f:
         raw = json.load(f)
 
-    # 支持新的 visual_plan.json 格式（包含 pages 数组）
-    if "pages" in raw:
+    # 优先使用 slides（当前正式执行结构）
+    if isinstance(raw, dict) and "slides" in raw:
+        visual_plan = raw.get("slides", [])
+        meta = raw.get("meta", {})
+    # 支持 pages 结构作为兼容输入
+    elif "pages" in raw:
         # 新格式：从 pages 数组转换为旧格式的 slides
         visual_plan = _convert_new_format_to_slides(raw["pages"])
         meta = {"source_file": raw.get("source_file", "")}
@@ -364,6 +372,10 @@ def execute_plan(plan_file: str, output_name: str = "Final_Presentation",
         # 旧格式：兼容现有逻辑
         visual_plan = raw if isinstance(raw, list) else raw.get("slides", raw)
         meta = raw.get("meta", {}) if isinstance(raw, dict) else {}
+
+    for slide in visual_plan:
+        if not slide.get("final_visual_prompt") and slide.get("visual_prompt"):
+            slide["final_visual_prompt"] = slide["visual_prompt"]
 
     proj = Path(project_dir) if project_dir else Path(meta.get("project_dir", "output"))
     slides_dir = proj / "slides"
@@ -376,8 +388,8 @@ def execute_plan(plan_file: str, output_name: str = "Final_Presentation",
     else:
         ppt_dir.mkdir(parents=True, exist_ok=True)
     
-    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    api_base = os.getenv("OPENAI_API_BASE")
+    api_key = get_llm_api_key()
+    api_base = get_llm_api_base()
     generator = PPTGenerator(api_key, api_base, slides_dir=str(slides_dir))
 
     resolution = (resolution or "1K").strip().upper()

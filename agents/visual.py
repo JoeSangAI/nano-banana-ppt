@@ -11,39 +11,13 @@ from typing import Dict, List, Optional, Union
 from openai import OpenAI
 
 from ..utils.llm_client import chat_completion_with_fallback, MODEL_FALLBACK_CHAIN
-from .style_library import get_curated_style, STYLE_LIBRARY
-from .reviewer import ReviewerAgent
+from ..utils.provider_config import DEFAULT_LLM_MODEL, get_llm_api_base
+from ..utils.prompt_spec import format_prompt_sections, prompt_has_required_sections
+from .style_library import get_curated_style
 from ..utils.image_assets import ImageMode
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-
-# 问题3和问题7: Visual Prompt 约束模板
-VISUAL_PROMPT_CONSTRAINTS = """
-【页面布局规范 - 严格遵守】
-
-### 绝对禁止
-- 任何英文文字或字母
-- 卡通人物、动漫角色
-- 3D渲染效果
-- 与内容无关的装饰元素
-
-### 布局约束
-- 标题区：顶部10-15%，居左或居中
-- 内容区：中部60-70%
-- 结论区：底部15-20%，结论文字必须最大最醒目
-
-### 重复内容约束
-- 标题文字只出现在标题位置，不出现在画面装饰中
-- 每个关键信息只允许在一个位置出现
-- 禁止在画面中重复核心信息（最多出现1次）
-
-### 数据展示规范
-- 数字超过3个时用卡片/列表，不用柱状图对比
-- 避免排名展示（抖音>视频号>快手）
-- 强调用红色，背景/次要用灰色
-"""
 
 
 class VisualAgent:
@@ -69,11 +43,11 @@ class VisualAgent:
     def __init__(self, api_key: str, api_base: str = None, prompt_mode: str = "verbose", model_name: str = None):
         self.client = OpenAI(
             api_key=api_key,
-            base_url=api_base or "https://generativelanguage.googleapis.com/v1beta/openai",
+            base_url=get_llm_api_base(api_base),
             timeout=120.0,
             max_retries=3
         )
-        self.model = model_name if model_name else "MiniMax-M2.7"
+        self.model = model_name if model_name else DEFAULT_LLM_MODEL
         self.prompt_mode = prompt_mode  # "verbose" or "minimal"
 
     def analyze_content_depth(self, narrative_outline: List[Dict]) -> Dict:
@@ -173,9 +147,7 @@ class VisualAgent:
                 ],
                 temperature=0.5
             )
-            content = response.choices[0].message.content.strip()
-            content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL | re.IGNORECASE).strip()
-            content = re.sub(r"^```(?:json)?\s*|```$", "", content, flags=re.MULTILINE|re.IGNORECASE).strip()
+            content = self._clean_llm_json_response(response.choices[0].message.content)
 
             analysis = json.loads(content)
             logger.info(f"✅ 内容深度分析完成: {analysis.get('overall_theme', 'N/A')}")
@@ -204,40 +176,51 @@ class VisualAgent:
             改进后的 visual_prompt
         """
         logger.info("🔍 Visual Agent: 正在审查 visual prompt 质量...")
+        required_sections = format_prompt_sections(prefix="   - ")
 
-        review_prompt = f"""你是一位资深的 Prompt 质量审查专家。请审查以下 visual prompt 的质量，并根据需要进行改进。
+        review_prompt = f"""你是一位资深的 Prompt 质量审查专家。请审查以下执行 prompt 的质量，并在必要时做轻量改进。
 
-【原始 Visual Suggestion】
+【当前页视觉目标】
 {visual_suggestion}
 
-【文字内容】
+【批准的主文字内容】
 Headline: {text_content.get('headline', '')}
 Subhead: {text_content.get('subhead', '')}
 Body: {text_content.get('body', [])}
 
-【当前 Visual Prompt】
+【当前执行 Prompt】
 {visual_prompt}
 
-【审查标准】
-1. 结构清晰度：是否有明确的【TEXT TO RENDER】和【VISUAL SCENE】部分？
-2. 语义准确性：是否准确传达了 Visual Suggestion 的核心意图？
-3. 文字完整性：是否包含所有必要的文字内容？
-4. 重点突出度：关键情节是否被强调？
-5. 自洽性：是否有矛盾或冲突的描述？
-6. 精简度：是否用精简但准确的语言表达？
+【审查目标】
+1. 保留完整结构：必须保留原有 section headers，尤其是：
+{required_sections}
+2. 文字正确性优先：TEXT TO RENDER 中的文字必须与批准内容完全一致，不得删减、改写、翻译或补写。
+3. 中文渲染优先：如果目标语言是中文，必须强化“中文主文字正常、清晰、稳定”的优先级。
+4. 精简但不降级：删除重复、冲突、空话和低价值废话，但不要丢失关键信息。
+5. Seed / Reference 边界清晰：保留“当前页语义优先，seed 只控制视觉语法”的规则。
+6. 视觉场景忠实：VISUAL SCENE 必须忠于当前页的 visual suggestion，不得擅自换题。
 
-【任务】
-如果 visual prompt 存在问题，请改进它。如果已经很好，直接返回原 prompt。
+【工作方式】
+- 如果当前 prompt 已经结构完整且表达清楚，可直接原样返回。
+- 如果需要修改，只做必要的小幅优化。
+- 不要把 prompt 改写成别的结构。
+- 不要输出解释、注释或总结。
 
 【输出格式】
-直接输出改进后的 visual prompt 文本，不要添加任何解释或评论。
+直接输出改进后的完整 prompt 文本，不要添加任何解释或评论。
 """
 
         try:
             response = chat_completion_with_fallback(
                 self.client, model=self.model, model_fallback=MODEL_FALLBACK_CHAIN,
                 messages=[
-                    {"role": "system", "content": "You are a prompt quality reviewer. Output the improved prompt directly."},
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a prompt quality reviewer. Preserve section structure, preserve approved text exactly, "
+                            "and only make minimal high-value improvements. Output the improved prompt directly."
+                        ),
+                    },
                     {"role": "user", "content": review_prompt}
                 ],
                 temperature=0.3
@@ -251,6 +234,527 @@ Body: {text_content.get('body', [])}
         except Exception as e:
             logger.error(f"Visual prompt 审查失败: {e}")
             return visual_prompt
+
+    @staticmethod
+    def _normalize_page_type(page_type: str) -> str:
+        return (page_type or "content").strip().lower()
+
+    @staticmethod
+    def _infer_seed_family(page_type: str) -> str:
+        page_type = VisualAgent._normalize_page_type(page_type)
+        if page_type in {"section"}:
+            return "section"
+        if page_type in {"cover", "back", "ending", "hero", "quote"}:
+            return "hero"
+        if page_type == "background_only":
+            return "background_only"
+        return "content"
+
+    @staticmethod
+    def _page_behavior_instruction(page_type: str) -> str:
+        page_type = VisualAgent._normalize_page_type(page_type)
+        behavior = {
+            "cover": "Establish the opening visual impression with strong hierarchy and a unified focal point.",
+            "section": "Emphasize pause and transition with fewer elements and one dominant message.",
+            "hero": "Emphasize one dominant message and one dominant visual subject.",
+            "quote": "Emphasize one dominant quotation and keep the visual support restrained.",
+            "content": "Prioritize structure, readability, and clean grouping of information.",
+            "comparison": "Make the contrast immediately legible while keeping the layout disciplined.",
+            "flowchart": "Organize the process clearly with readable progression and stable grouping.",
+            "data": "Prioritize data clarity and hierarchy over decorative complexity.",
+            "infographic": "Organize density through modular grouping and clear scanning paths.",
+            "toc": "Keep chapter structure highly legible and easy to scan.",
+            "ending": "End with clarity and restraint, avoiding visual clutter.",
+            "back": "Keep the closing page clean, quiet, and brand-consistent.",
+        }
+        return behavior.get(page_type, behavior["content"])
+
+    @staticmethod
+    def _collect_text_samples(text_content: Dict, page: Dict) -> List[str]:
+        samples: List[str] = []
+        for key in ("headline", "subhead"):
+            value = text_content.get(key, "")
+            if value:
+                samples.append(str(value))
+
+        body = text_content.get("body", [])
+        if isinstance(body, list):
+            samples.extend(str(item).strip() for item in body if str(item).strip())
+        elif body:
+            samples.append(str(body))
+
+        table_data = text_content.get("table_data") or page.get("table_data")
+        if isinstance(table_data, dict):
+            samples.extend(str(h) for h in table_data.get("headers", []) if str(h).strip())
+            for row in table_data.get("rows", []):
+                if isinstance(row, list):
+                    samples.extend(str(cell) for cell in row if str(cell).strip())
+        elif isinstance(table_data, list):
+            for row in table_data:
+                if isinstance(row, dict):
+                    samples.extend(str(v) for v in row.values() if str(v).strip())
+                elif isinstance(row, list):
+                    samples.extend(str(v) for v in row if str(v).strip())
+                elif row:
+                    samples.append(str(row))
+        elif table_data:
+            samples.append(str(table_data))
+
+        return samples
+
+    def _detect_target_language(self, text_content: Dict, page: Dict) -> str:
+        text_blob = "\n".join(self._collect_text_samples(text_content, page))
+        cjk_count = len(re.findall(r"[\u4e00-\u9fff]", text_blob))
+        latin_count = len(re.findall(r"[A-Za-z]", text_blob))
+
+        if cjk_count > 0 and cjk_count >= latin_count:
+            return "Chinese (Simplified)"
+        if latin_count > 0 and cjk_count == 0:
+            return "English"
+        if cjk_count > 0 and latin_count > 0:
+            return "Mixed"
+        return "Follow approved content plan"
+
+    @staticmethod
+    def _format_table_content(table_data) -> str:
+        if not table_data:
+            return ""
+
+        lines: List[str] = []
+        if isinstance(table_data, dict) and "headers" in table_data and "rows" in table_data:
+            headers = [str(h) for h in table_data.get("headers", [])]
+            if headers:
+                lines.append("Columns: " + " | ".join(headers))
+            for idx, row in enumerate(table_data.get("rows", []), start=1):
+                row_values = [str(cell) for cell in row]
+                lines.append(f"Row {idx}: " + " | ".join(row_values))
+            return "\n".join(lines)
+
+        if isinstance(table_data, list):
+            for idx, row in enumerate(table_data):
+                if isinstance(row, dict):
+                    if idx == 0:
+                        lines.append("Columns: " + " | ".join(str(k) for k in row.keys()))
+                    lines.append(f"Row {idx + 1}: " + " | ".join(str(v) for v in row.values()))
+                elif isinstance(row, list):
+                    prefix = "Header" if idx == 0 else f"Row {idx}"
+                    lines.append(f"{prefix}: " + " | ".join(str(v) for v in row))
+                elif row:
+                    lines.append(str(row))
+            return "\n".join(lines)
+
+        return str(table_data)
+
+    def _build_text_to_render_block(self, text_content: Dict, page: Dict) -> str:
+        body = text_content.get("body", [])
+        if not isinstance(body, list):
+            body = [body] if body else []
+        body_lines = "\n".join(
+            f"{idx}. {str(item).lstrip('-•* ').strip()}"
+            for idx, item in enumerate(body, start=1)
+            if str(item).strip()
+        )
+        table_content = self._format_table_content(text_content.get("table_data") or page.get("table_data"))
+
+        return (
+            "Headline:\n"
+            f"{text_content.get('headline', '')}\n\n"
+            "Subtitle:\n"
+            f"{text_content.get('subhead', '')}\n\n"
+            "Body:\n"
+            f"{body_lines}\n\n"
+            "Table:\n"
+            f"{table_content}"
+        ).strip()
+
+    @staticmethod
+    def _parse_in_scene_text(visual_suggestion: str) -> tuple[str, str]:
+        if not visual_suggestion:
+            return "", ""
+
+        lines = visual_suggestion.splitlines()
+        cleaned_lines: List[str] = []
+        unique = []
+        seen = set()
+
+        def add_entry(raw_text: str) -> None:
+            cleaned = str(raw_text).strip().lstrip("-•*0123456789.、)）").strip()
+            if not cleaned or cleaned in seen:
+                return
+            seen.add(cleaned)
+            unique.append(cleaned)
+
+        header_with_content = re.compile(
+            r"^\s*(?:【(?:IN-SCENE TEXT|SCENE TEXT|场景内文字|画面内文字)】|(?:IN-SCENE TEXT|SCENE TEXT|场景内文字|画面内文字)\s*[:：])\s*(.+?)\s*$",
+            re.IGNORECASE,
+        )
+        header_only = re.compile(
+            r"^\s*(?:【(?:IN-SCENE TEXT|SCENE TEXT|场景内文字|画面内文字)】|(?:IN-SCENE TEXT|SCENE TEXT|场景内文字|画面内文字)\s*[:：]?)\s*$",
+            re.IGNORECASE,
+        )
+        section_header = re.compile(r"^\s*【[^】]+】\s*$")
+        list_item = re.compile(r"^\s*(?:[-•*]|\d+[.)、．]|[A-Za-z][.)])\s+")
+
+        idx = 0
+        while idx < len(lines):
+            line = lines[idx]
+            inline_match = header_with_content.match(line)
+            if inline_match:
+                add_entry(inline_match.group(1))
+                idx += 1
+                continue
+
+            if header_only.match(line):
+                idx += 1
+                block_entries = 0
+                while idx < len(lines):
+                    block_line = lines[idx]
+                    stripped = block_line.strip()
+                    if not stripped:
+                        idx += 1
+                        if block_entries:
+                            break
+                        continue
+                    if section_header.match(block_line):
+                        break
+                    if block_entries and not list_item.match(block_line):
+                        break
+                    add_entry(block_line)
+                    block_entries += 1
+                    idx += 1
+                continue
+
+            cleaned_lines.append(line)
+            idx += 1
+
+        cleaned_description = "\n".join(cleaned_lines).strip()
+        return cleaned_description, "\n".join(unique)
+
+    def _build_style_system_block(
+        self,
+        *,
+        style_definition: str,
+        style_config: Dict,
+        chapter_theme_hint: str = "",
+    ) -> str:
+        fonts = style_config.get("fonts", [])
+        heading_font = fonts[0] if len(fonts) > 0 else "System heading font"
+        body_font = fonts[1] if len(fonts) > 1 else (fonts[0] if fonts else "System body font")
+        palette = ", ".join(style_config.get("palette", [])) or "(Follow approved deck palette)"
+        chapter_hint_line = f"\nChapter cue: {chapter_theme_hint}" if chapter_theme_hint else ""
+
+        if self.prompt_mode == "minimal":
+            return f"""【STYLE SYSTEM】
+Deck theme: {style_config.get('user_preference') or style_config.get('description') or style_definition}
+Style: {style_definition}{chapter_hint_line}
+Palette: {palette}
+Typography: Heading={heading_font}; Body={body_font}
+
+- Keep typography stable across the deck.
+- Use the palette cleanly and sparingly.
+- Prioritize readability and a controlled visual hierarchy."""
+
+        accent_usage = style_config.get("accent_usage", "")
+        accent_usage_line = f"\nAccent strategy: {accent_usage}" if accent_usage else ""
+        manifesto = style_config.get("manifesto", "")
+        manifesto_block = (
+            f"\nArt Director manifesto:\n{manifesto}"
+            if manifesto else ""
+        )
+
+        return f"""【STYLE SYSTEM】
+Deck theme: {style_config.get('user_preference') or style_config.get('description') or style_definition}
+Style: {style_definition}{chapter_hint_line}
+Palette: {palette}
+Heading font: {heading_font}
+Body font: {body_font}{accent_usage_line}{manifesto_block}
+
+- The font system is chosen once from the deck style and then locked across the entire deck.
+- Do not switch font families from slide to slide.
+- Default to clean, standard, highly legible typography.
+- Do not stylize main text unless explicitly required.
+- Use accent colors only where they improve hierarchy or comprehension.
+- Follow the manifesto's mood direction while avoiding clichéd default metaphors."""
+
+    def _build_negative_constraints_block(self) -> str:
+        if self.prompt_mode == "minimal":
+            return """【NEGATIVE CONSTRAINTS】
+- No garbled or malformed text
+- No duplicate main text
+- No extra text
+- No text-background conflict"""
+
+        return """【NEGATIVE CONSTRAINTS】
+- No garbled or malformed text
+- No duplicate main text
+- No extra text
+- No text-background conflict
+- No copied reference impurities
+- No multiple competing focal points
+- No sacrificing readability for visual flair"""
+
+    @staticmethod
+    def _summarize_reference_inputs(reference_image_path: Optional[str], native_images: List[Dict]) -> tuple[str, str, str]:
+        summary_lines: List[str] = []
+        modes: List[str] = []
+        roles: List[str] = []
+
+        if reference_image_path:
+            summary_lines.append(f"Template/style anchor: {os.path.basename(reference_image_path)}")
+            modes.append("STYLE_ANCHOR")
+            roles.append("template style anchor")
+
+        for idx, img in enumerate(native_images, start=1):
+            mode = str(img.get("mode", "INTENT_FUSION")).upper()
+            role = img.get("semantic_role") or img.get("role") or f"native image {idx}"
+            modes.append(mode)
+            roles.append(role)
+            summary_lines.append(f"Native image {idx}: mode={mode}; role={role}")
+
+        if not summary_lines:
+            summary_lines.append("No explicit page-level reference image.")
+
+        unique_modes = []
+        for mode in modes:
+            if mode not in unique_modes:
+                unique_modes.append(mode)
+
+        unique_roles = []
+        for role in roles:
+            if role not in unique_roles:
+                unique_roles.append(role)
+
+        return (
+            ", ".join(unique_modes) if unique_modes else "NONE",
+            ", ".join(unique_roles) if unique_roles else "none",
+            "\n".join(summary_lines),
+        )
+
+    @staticmethod
+    def _build_seed_reference_summary(seed_family: str, seed_role: str) -> str:
+        if seed_role == "family_seed":
+            return (
+                f"This slide is the seed reference for the {seed_family} family. "
+                "It defines visual grammar for follow-up slides, but its specific content must not be reused."
+            )
+        return (
+            f"Use the {seed_family} seed slide only as a visual-grammar reference when it is attached at execution time."
+        )
+
+    @staticmethod
+    def _build_chapter_theme_hint(page_num: int, chapter_themes: Dict) -> str:
+        for chapter in chapter_themes.get("chapters", []):
+            pages = chapter.get("pages", [])
+            if page_num not in pages:
+                continue
+            theme = chapter.get("visual_theme", {})
+            parts = [
+                chapter.get("chapter_name", "").strip(),
+                theme.get("accent_color", "").strip(),
+                theme.get("visual_motif", "").strip(),
+                theme.get("emotional_tone", "").strip(),
+            ]
+            parts = [part for part in parts if part]
+            if parts:
+                return " | ".join(parts)
+        return ""
+
+    def _build_execution_prompt(
+        self,
+        *,
+        page: Dict,
+        page_type: str,
+        text_content: Dict,
+        visual_suggestion: str,
+        style_definition: str,
+        style_config: Dict,
+        reference_image_path: Optional[str],
+        native_images: List[Dict],
+        seed_family: str,
+        seed_role: str,
+        chapter_theme_hint: str = "",
+    ) -> str:
+        target_language = self._detect_target_language(text_content, page)
+        text_to_render = self._build_text_to_render_block(text_content, page)
+        visual_description_en, in_scene_text = self._parse_in_scene_text(visual_suggestion)
+        communication_goal = (
+            page.get("one_takeaway")
+            or page.get("core_message")
+            or page.get("visual_intent")
+            or text_content.get("headline")
+            or page.get("section_title")
+            or "Communicate the approved content clearly."
+        )
+        page_behavior = self._page_behavior_instruction(page_type)
+        reference_mode, reference_role, reference_summary = self._summarize_reference_inputs(
+            reference_image_path, native_images
+        )
+
+        chinese_rule = (
+            "- Main Chinese text must be normal, clean, readable Simplified Chinese."
+            if target_language in {"Chinese (Simplified)", "Mixed"}
+            else "- Main text in the target language must be clean, readable, and well-formed."
+        )
+
+        if not visual_description_en:
+            visual_description_en = "Generate a suitable visual that matches the approved content and page type."
+
+        in_scene_text_block = in_scene_text or "None. Do not invent incidental in-scene text."
+        style_system_block = self._build_style_system_block(
+            style_definition=style_definition,
+            style_config=style_config,
+            chapter_theme_hint=chapter_theme_hint,
+        )
+        negative_constraints_block = self._build_negative_constraints_block()
+
+        scene_guidance = [
+            "- Stay faithful to the approved current-slide visual goal.",
+            "- Preserve the key objects, actions, mood, spatial relationships, and narrative focus of this slide.",
+            "- Build one clear primary visual subject.",
+            "- Reserve stable, clean, readable areas for the main text.",
+            "- Follow the page behavior for this slide type.",
+            "- Keep the deck style consistent while fully using the model's image-generation strength.",
+        ]
+        if self.prompt_mode != "minimal":
+            scene_guidance.extend([
+                "- Keep secondary details subordinate to the main narrative focus.",
+                "- If references and current-slide semantics conflict, follow the current slide.",
+            ])
+
+        prompt = f"""You are generating a single presentation slide image.
+
+【LANGUAGE RULE】
+Target language: {target_language}
+
+- All rendered main text must remain exactly in the target language from the approved content plan.
+- Do not translate, rewrite, summarize, shorten, or mix languages.
+- Prompt instructions may be in English, but rendered slide text must strictly follow the target language.
+
+【NON-NEGOTIABLE】
+- Render all approved main text exactly as provided.
+{chinese_rule}
+- No garbled text, malformed characters, pseudo-Chinese, missing strokes, duplicate text, or random symbols.
+- If visual complexity conflicts with text clarity, preserve text clarity.
+- You may improve readability through hierarchy, grouping, cards, spacing, and modular layout.
+- You must not change the wording itself.
+- Main slide text must follow the global deck typography system.
+- In-scene incidental text may use a context-specific style only when explicitly required by the visual description, and must not compete with main slide text.
+
+【TEXT TO RENDER】
+{text_to_render}
+
+- If a field is empty, do not invent content.
+- If text is long, reorganize layout, not wording.
+- If a table exists, render all rows and columns completely.
+
+【PAGE SEMANTICS】
+Page type: {page_type}
+Page behavior: {page_behavior}
+Communication goal: {communication_goal}
+
+{style_system_block}
+
+【SEED / REFERENCE CONTROL】
+Seed family: {seed_family}
+Seed reference: {self._build_seed_reference_summary(seed_family, seed_role)}
+Reference mode: {reference_mode}
+Reference role: {reference_role}
+Reference summary: {reference_summary}
+
+- Current-slide semantics always override references.
+- Seed references are only for visual grammar: palette behavior, typography feel, spacing rhythm, material treatment, composition discipline, and module organization.
+- Do not inherit the seed slide's specific text, subject matter, scene, infographic skeleton, icon cluster, or unique metaphor.
+- Apply the current slide's explicit reference only according to its assigned mode.
+- Do not copy accidental text, UI fragments, watermarks, logos, or noise from references.
+- Do not let references overpower the main slide text.
+
+【VISUAL SCENE】
+{visual_description_en}
+
+Required in-scene text, if any:
+{in_scene_text_block}
+
+{chr(10).join(scene_guidance)}
+
+{negative_constraints_block}
+
+【FINAL INSTRUCTION】
+This slide succeeds only if:
+- the main text is rendered correctly in the target language
+- the hierarchy is immediately clear
+- the slide matches the approved deck style
+- the image feels strong, clean, and controlled"""
+
+        return prompt.strip()
+
+    def _prompt_has_required_sections(self, prompt: str) -> bool:
+        return prompt_has_required_sections(prompt)
+
+    def _prompt_preserves_required_text(self, prompt: str, text_content: Dict, page: Dict) -> bool:
+        for text in self._collect_text_samples(text_content, page):
+            text = str(text).strip()
+            if text and text not in prompt:
+                return False
+        return True
+
+    @staticmethod
+    def _extract_first_json_block(content: str) -> Optional[str]:
+        text = content or ""
+        start_indices = [idx for idx in (text.find("{"), text.find("[")) if idx != -1]
+        if not start_indices:
+            return None
+
+        for start in sorted(start_indices):
+            stack = []
+            in_string = False
+            escaped = False
+
+            for idx in range(start, len(text)):
+                char = text[idx]
+
+                if in_string:
+                    if escaped:
+                        escaped = False
+                    elif char == "\\":
+                        escaped = True
+                    elif char == '"':
+                        in_string = False
+                    continue
+
+                if char == '"':
+                    in_string = True
+                    continue
+
+                if char in "{[":
+                    stack.append("}" if char == "{" else "]")
+                    continue
+
+                if char in "}]":
+                    if not stack or char != stack.pop():
+                        break
+                    if not stack:
+                        return text[start:idx + 1]
+
+        return None
+
+    @classmethod
+    def _clean_llm_json_response(cls, content: str) -> str:
+        content = re.sub(r'<think>.*?</think>', '', (content or ''), flags=re.DOTALL | re.IGNORECASE).strip()
+        content = re.sub(r"^```(?:json)?\s*|```$", "", content, flags=re.MULTILINE | re.IGNORECASE).strip()
+        extracted = cls._extract_first_json_block(content)
+        return extracted.strip() if extracted else content
+
+    @staticmethod
+    def _default_chapter_visual_themes(heading_font: str, body_font: str, base_color: str) -> Dict:
+        return {
+            "global_consistency": {
+                "paper_texture": "统一的纸张质感",
+                "typography": f"{heading_font} + {body_font}",
+                "composition": "统一的构图方式",
+                "base_color": base_color
+            },
+            "chapters": []
+        }
 
 
     def _parse_user_color_preference(self, user_preference: str) -> list:
@@ -277,13 +781,7 @@ Output format: ["#HEX1", "#HEX2", "#HEX3"]"""
                 ],
                 temperature=0.3
             )
-            content = response.choices[0].message.content.strip()
-
-            # 清理 <think> 标签（MiniMax 模型特有）
-            content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL | re.IGNORECASE).strip()
-
-            # 清理 markdown 代码块标记
-            content = re.sub(r"^```(?:json)?\s*|```$", "", content, flags=re.MULTILINE|re.IGNORECASE).strip()
+            content = self._clean_llm_json_response(response.choices[0].message.content)
 
             colors = json.loads(content)
             if isinstance(colors, list) and len(colors) >= 2:
@@ -359,17 +857,7 @@ Output format: ["#HEX1", "#HEX2", "#HEX3"]"""
                 temperature=0.3
             )
 
-            result_text = response.choices[0].message.content.strip()
-
-            # 清理 <think> 思考过程标签
-            result_text = re.sub(r'<think>.*?</think>', '', result_text, flags=re.DOTALL | re.IGNORECASE)
-            result_text = result_text.strip()
-
-            # 清理可能的 markdown 代码块标记
-            result_text = re.sub(r'^```json\s*', '', result_text)
-            result_text = re.sub(r'^```\s*', '', result_text)
-            result_text = re.sub(r'```\s*$', '', result_text)
-            result_text = result_text.strip()
+            result_text = self._clean_llm_json_response(response.choices[0].message.content)
 
             # 解析 JSON
             chapter_themes = json.loads(result_text)
@@ -379,59 +867,10 @@ Output format: ["#HEX1", "#HEX2", "#HEX3"]"""
 
         except json.JSONDecodeError as e:
             logger.warning(f"⚠️ 章节视觉主题 JSON 解析失败，使用默认值: {e}")
-            # 返回默认值
-            return {
-                "global_consistency": {
-                    "paper_texture": "统一的纸张质感",
-                    "typography": f"{heading_font} + {body_font}",
-                    "composition": "统一的构图方式",
-                    "base_color": base_color
-                },
-                "chapters": []
-            }
+            return self._default_chapter_visual_themes(heading_font, body_font, base_color)
         except Exception as e:
             logger.warning(f"⚠️ 生成章节视觉主题失败，使用默认值: {e}")
-            return {
-                "global_consistency": {
-                    "paper_texture": "统一的纸张质感",
-                    "typography": f"{heading_font} + {body_font}",
-                    "composition": "统一的构图方式",
-                    "base_color": base_color
-                },
-                "chapters": []
-            }
-
-    def review_visual_prompt(self, visual_prompt: str, visual_suggestion: str, text_content: Dict, page_num: int) -> str:
-        """
-        Review visual prompt 的质量，确保结构清晰、语义准确、无矛盾
-
-        检查项：
-        1. 结构清晰度
-        2. 语义准确性
-        3. 文字完整性
-        4. 重点突出度
-        5. 自洽性
-        6. 精简度
-
-        Returns:
-            改进后的 visual_prompt
-        """
-        # 检查是否包含必要的文字内容
-        headline = text_content.get('headline', '')
-        body = text_content.get('body', [])
-
-        # 如果 prompt 中缺少关键文字，直接返回原 prompt（后处理逻辑会补充）
-        if headline and headline not in visual_prompt:
-            logger.warning(f"⚠️ P{page_num} visual prompt 缺少标题，将由后处理逻辑补充")
-
-        # 检查是否有明显的矛盾
-        if 'TEXT TO RENDER' in visual_prompt and 'VISUAL SCENE' in visual_prompt:
-            # 结构良好，直接返回
-            return visual_prompt
-
-        # 如果结构不完整，返回原 prompt（后处理逻辑会补充）
-        return visual_prompt
-
+            return self._default_chapter_visual_themes(heading_font, body_font, base_color)
 
     def define_style(self, constraints: Dict, assets: Dict, template_info: Dict = None) -> Union[str, Dict]:
         """
@@ -525,11 +964,7 @@ Ensure the palette has high contrast for text reading.
             # 记录原始返回内容用于调试
             logger.info(f"LLM 原始返回内容: {content[:200]}...")
 
-            # 清理 <think> 标签（MiniMax 模型特有）
-            content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL | re.IGNORECASE).strip()
-
-            # 清理 markdown 代码块标记
-            content = re.sub(r"^```(?:json)?\s*|```$", "", content, flags=re.MULTILINE|re.IGNORECASE).strip()
+            content = self._clean_llm_json_response(content)
 
             style_data = json.loads(content)
 
@@ -863,7 +1298,7 @@ Ensure the palette has high contrast for text reading.
         for idx, page in enumerate(narrative_outline):
             page_type = page.get('type', 'content').lower()
             text_content = page.get('text_content', {})
-            visual_suggestion = page.get('visual_suggestion', '')
+            visual_suggestion = page.get('visual_description', page.get('visual_suggestion', ''))
 
             # 1. Reference image routing
             reference_image_path = None
@@ -890,399 +1325,135 @@ Ensure the palette has high contrast for text reading.
             layout_name, layout_desc = self._assign_layout(page_type, text_content, prev_layout, page)
             prev_layout = layout_name
 
+            # Seed page vs follow-up page metadata
+            CONTENT_FAMILY = {'content', 'framework', 'flowchart', 'comparison', 'data', 'toc', 'breathing', 'infographic'}
+            type_family = 'content' if page_type in CONTENT_FAMILY else page_type
+            is_seed_page = type_family not in seen_types
+            seen_types.add(type_family)
+            seed_role = 'family_seed' if is_seed_page else 'follow_up'
+
+            if is_seed_page:
+                seed_usage_rule = (
+                    "种子页：负责定义这一类页面的风格、排版语言和视觉语法，供后续同类页面继承。"
+                )
+            else:
+                seed_usage_rule = (
+                    "后续页：只能继承种子页的风格、字体、配色、间距和版式语法；禁止复用种子页的文字、示例内容、"
+                    "核心画面主体、独特图形组合或信息图骨架。"
+                )
+
             # Task 3: Handle table/chart pages (DataVisualizer)
             if layout_name in ('chart_from_table',):
                 logger.info(f"📊 Visual Agent: Skipping prompt gen for data page (layout={layout_name})")
                 plan_item = page.copy()
-                plan_item['visual_prompt'] = "DATA_VISUALIZATION_PLACEHOLDER"
+                plan_item['visual_description'] = page.get('visual_description', visual_suggestion)
+                plan_item['final_visual_prompt'] = "DATA_VISUALIZATION_PLACEHOLDER"
+                plan_item['visual_prompt'] = plan_item['final_visual_prompt']
                 plan_item['reference_image'] = reference_image_path
                 plan_item['layout'] = layout_name
                 plan_item['logo_path'] = assets.get('logo_path') or (template_info.get('logo_path') if template_info else None)
                 plan_item['logo_location'] = template_info.get('logo_location', 'Top-Right') if template_info else 'Top-Right'
                 plan_item['style_config'] = style_config
                 plan_item['use_data_visualizer'] = True
+                plan_item['seed_role'] = seed_role
+                plan_item['seed_usage_rule'] = seed_usage_rule
 
                 plan_item['chart_type'] = page.get('visualization', 'bar')
 
                 tasks.append({'skip_llm': True, 'result': plan_item})
                 continue
 
-            # 3. Text rendering block — soft guidance, let the model decide hierarchy
-            render_text_block = "TEXT CONTENT TO DISPLAY (render ONLY these, nothing else):\n"
-            render_text_block += "(Design goal: the reader should instantly see what matters most on this slide. Use size, weight, and color differences from the palette to create natural visual hierarchy — you decide how.)\n\n"
-            if text_content.get('headline'):
-                render_text_block += f'Headline: "{text_content["headline"]}"\n'
-            if text_content.get('subhead'):
-                render_text_block += f'Subtitle: "{text_content["subhead"]}"\n'
-            if text_content.get('body'):
-                render_text_block += "Body:\n"
-                for i, item in enumerate(text_content['body']):
-                    item_clean = item.lstrip('-•* ').strip()
-                    render_text_block += f'  {i+1}. "{item_clean}"\n'
-
-            # 表格内容必须完整渲染
-            # table_data 可能存在于 text_content 里，也可能直接在 page 根级别
-            table_data = text_content.get('table_data') or page.get('table_data')
-            if table_data:
-                render_text_block += "\nTable Data (MUST be fully rendered with ALL rows and columns):\n"
-                # 支持三种格式：
-                # 1. {headers: [...], rows: [[...], [...]]} - 标准格式
-                # 2. [{...}, {...}] - list of dicts
-                # 3. [[...], [...]] - list of lists (第一行是表头)
-                # 4. 字符串格式
-                if isinstance(table_data, dict) and 'headers' in table_data and 'rows' in table_data:
-                    # 标准格式 {headers: [...], rows: [[...], [...]]}
-                    headers = table_data['headers']
-                    render_text_block += "Columns: " + " | ".join(headers) + "\n"
-                    for row_idx, row in enumerate(table_data['rows']):
-                        row_str = " | ".join([str(cell) for cell in row])
-                        render_text_block += f"Row {row_idx+1}: {row_str}\n"
-                elif isinstance(table_data, list) and len(table_data) > 0:
-                    if isinstance(table_data[0], dict):
-                        # 列表 of dicts - 获取列名
-                        headers = list(table_data[0].keys())
-                        render_text_block += "Columns: " + " | ".join(headers) + "\n"
-                        for row_idx, row in enumerate(table_data):
-                            row_values = [str(row.get(h, '')) for h in headers]
-                            render_text_block += f"Row {row_idx+1}: " + " | ".join(row_values) + "\n"
-                    elif isinstance(table_data[0], list):
-                        # 列表 of lists - 第一个是表头
-                        for row_idx, row in enumerate(table_data):
-                            row_str = " | ".join([str(cell) for cell in row])
-                            prefix = "Header" if row_idx == 0 else f"Row {row_idx}"
-                            render_text_block += f"{prefix}: {row_str}\n"
-                elif isinstance(table_data, str):
-                    render_text_block += table_data
-                render_text_block += "[END TABLE]\n"
-            
-            # 3.5 查找当前页面所属的章节主题
             page_num = page.get('page_num', idx + 1)
-            chapter_theme_block = ""
-            for chapter in chapter_themes.get('chapters', []):
-                if page_num in chapter.get('pages', []):
-                    theme = chapter.get('visual_theme', {})
-                    chapter_theme_block = f"""
-【CHAPTER VISUAL THEME】
-This slide belongs to: {chapter.get('chapter_name', 'N/A')}
-- Accent Color: {theme.get('accent_color', 'N/A')}
-- Visual Motif: {theme.get('visual_motif', 'N/A')}
-- Paper Technique: {theme.get('paper_technique', 'N/A')}
-- Emotional Tone: {theme.get('emotional_tone', 'N/A')}
-
-Use these chapter-specific elements to maintain visual consistency within this story arc.
-"""
-                    break
-
-            # 4. Page Type & Native Image Instruction
-            type_instruction = self._get_page_type_specific_instruction(page_type)
-
-            # 4.5 Seed page vs follow-up page soft guidance
-            CONTENT_FAMILY = {'content', 'framework', 'flowchart', 'comparison', 'data', 'toc', 'breathing', 'infographic'}
-            type_family = 'content' if page_type in CONTENT_FAMILY else page_type
-            is_seed_page = type_family not in seen_types
-            seen_types.add(type_family)
-
-            if is_seed_page:
-                seed_guidance = (
-                    "\n\n【SEED PAGE — Sets the visual tone for all similar pages】\n"
-                    "This is the first page of its type. The typography and color choices you make here "
-                    "will be used as a visual reference for all subsequent pages of the same type. "
-                    "Pay special attention to creating clear visual hierarchy — the reader should instantly "
-                    "distinguish headlines from body text through natural differences in size, weight, and color. "
-                    "Make thoughtful use of the accent colors from the palette where it adds clarity."
-                )
-            else:
-                seed_guidance = (
-                    "\n\n【FOLLOW-UP PAGE — A reference image of a previous slide will be provided】\n"
-                    "Match the overall visual language (colors, typography style, mood) of the reference image. "
-                    "Focus your creative energy on the unique content and visual subject of THIS slide."
-                )
-            
-            # Anti-hallucination constraint for native images
+            chapter_theme_hint = self._build_chapter_theme_hint(page_num, chapter_themes)
             native_images = page.get('native_images', [])
-            has_blend = any(img.get('integration_mode') == 'blend' for img in native_images)
-            has_overlay = any(img.get('integration_mode', 'overlay') == 'overlay' for img in native_images)
-            
-            native_image_constraint = ""
-            if has_blend or has_overlay:
-                native_image_constraint = "\n\n【Native Image & Anti-Hallucination Constraints (EXTREMELY CRITICAL)】\n"
-                if has_blend:
-                    native_image_constraint += "1. A reference photo will be provided to BLEND into this scene. Your prompt MUST explicitly state: 'seamlessly blend the provided reference subject into the background environment'.\n"
-                    native_image_constraint += "2. DO NOT INVENT IRRELEVANT COMMERCIAL OBJECTS: The image generation model tends to hallucinate magazines, watches, advertisements, or product placements when given 'editorial' or 'premium' prompts. Your prompt MUST explicitly FORBID generating commercial products, brand items, or advertisements that are not described in the text content. However, contextually appropriate scene elements (people silhouettes, architecture, nature, atmospheric objects that serve the slide's metaphor) ARE allowed and encouraged for visual richness.\n"
-                if has_overlay:
-                    native_image_constraint += "3. A separate screenshot or graphic will be OVERLAID on top of the final image later. You MUST include an instruction to leave a massive, completely empty, clean safe zone (flat gradient or solid color, NO graphics, NO text, NO objects) for this overlay.\n"
+            seed_family = self._infer_seed_family(page_type)
 
-            # 5. Build prompt
-            system_prompt = (
-                "You are an expert Prompt Engineer for Nano Banana 2 (Gemini Image). "
-                "Your top priority is maintaining strict visual and typographic consistency across all generated slides. "
-                "\n\nCRITICAL OUTPUT REQUIREMENTS:\n"
-                "Your output MUST include TWO mandatory sections:\n"
-                "1. TEXT TO RENDER section - List ALL text elements that must appear in the image, EXACTLY as provided in the user's TEXT CONTENT section. Do NOT omit, summarize, or paraphrase any text.\n"
-                "2. VISUAL SCENE section - Describe the visual composition, layout, colors, textures, lighting, and styling.\n"
-                "\n"
-                "OUTPUT FORMAT: You must output EXACTLY one plain-text string with clear section markers. "
-                "Use simple section headers like '【TEXT TO RENDER】' and '【VISUAL SCENE】' to separate the sections. "
-                "DO NOT use markdown formatting: no asterisks, no hashes, no backticks, no bullet markers, no bold, no italic, no code blocks."
+            base_prompt = self._build_execution_prompt(
+                page=page,
+                page_type=page_type.upper(),
+                text_content=text_content,
+                visual_suggestion=visual_suggestion,
+                style_definition=style_definition,
+                style_config=style_config,
+                reference_image_path=reference_image_path,
+                native_images=native_images,
+                seed_family=seed_family,
+                seed_role=seed_role,
+                chapter_theme_hint=chapter_theme_hint,
             )
-
-            if template_info:
-                prompt_mode = f"""【Mode: STYLE CLONING & TEMPLATE SAFE ZONES】
-- Match the COLOR PALETTE, FONTS, and VISUAL TONE of the reference image.
-- Since a template is being used, generate graphics that act as a thematic backdrop or localized illustration.
-- STRICTLY leave vast empty negative space where template text/content resides.
-- Blend the edges of any generated illustration into the background color.
-- Do not generate full-bleed chaotic graphics that overlap text.
-- Assigned layout for this page: [{layout_name}] — {layout_desc}"""
-            else:
-                prompt_mode = f"""【Mode: AI MINTING】
-- Create a cohesive, professional slide matching the Global Style.
-- Assigned layout for this page: [{layout_name}] — {layout_desc}
-- VISUAL RICHNESS: Use figurative, concrete visual metaphors (landscapes, architecture, human silhouettes, natural phenomena, meaningful objects) rather than defaulting to abstract geometric shapes. The visual subject should directly serve the slide's specific message."""
-
-            manifesto_ban = "\n- ENFORCE MANIFESTO BANS: Avoid the specific clichéd elements listed in 'Cliche Avoidance' (e.g., glowing brains, 3D funnels). Note: this does NOT ban people, architecture, nature, or real-world objects — those are encouraged for visual richness." if manifesto else ""
-
-            # Warning for empty visual_suggestion
-            vb_empty_warning = (
-                "\n[WARNING: This slide's User-Confirmed Visual Description is EMPTY. "
-                "Generate a suitable visual that matches the page's semantic content and type, "
-                "using the headline, body, and one_takeaway as your guide. "
-                "Do NOT leave the visual field blank or generic.]"
-                if not visual_suggestion.strip() else ""
-            )
-
-            if self.prompt_mode == "minimal":
-                # Minimal mode: only essential constraints
-                neg_constraints = f"""【Key Guidelines】
-- Do not render logos or brand marks.
-- Render text exactly as provided in the TEXT CONTENT section.
-- Use full-bleed composition.{manifesto_ban}"""
-            else:
-                # Verbose mode: detailed negative constraints
-                neg_constraints = f"""【Negative Constraints (CRITICAL)】
-- Do NOT render any LOGO or brand mark anywhere.
-- ONLY use bullet points or list markers (like '•') when explicitly formatting a list of multiple small points. Do not use them for diagrams, frameworks, or standalone blocks.
-- NO black blocks, NO solid black rectangles, NO empty black corners. Use seamless full-bleed composition extending to all edges.
-- The reference image contains TEMPLATE PLACEHOLDER labels such as "标题", "内容", "小标题", "副标题", "单击此处编辑". These are NOT real content. You MUST NOT reproduce ANY of them.
-- Do NOT reproduce ANY text visible in the reference image that is not listed in the TEXT CONTENT section below.
-- Do NOT translate any Chinese text. Render it exactly as provided.
-- Do NOT add decorative text, watermarks, or labels not in the TEXT CONTENT section.
-- Do NOT repeat the exact same text multiple times. If the text content has two bullet points, do NOT render them four times. Avoid hallucinating duplicate text blocks.
-- Do NOT use random, inconsistent fonts. Typography MUST strictly adhere to the defined font families and weights in the Global Style.
-- TABLE RENDERING (CRITICAL): If a table is present in the TEXT CONTENT section, you MUST render the COMPLETE table with ALL rows and ALL columns. Do NOT summarize, truncate, or omit any row or column. Each cell's text must be clearly legible. The table should occupy a significant portion of the slide layout.{manifesto_ban}"""
-
-            if self.prompt_mode == "minimal":
-                # Minimal mode: simplified prompt structure
-                user_prompt = f"""Generate an image generation prompt for a PPT slide.
-
-【MANDATORY TEXT CONTENT — MUST RENDER EXACTLY】
-The following text MUST appear in the generated image. Do NOT omit, summarize, or paraphrase.
-Include this section in your output as '【TEXT TO RENDER】' with all text listed below:
-
-{render_text_block}
-
-【VISUAL SCENE DESCRIPTION】
-{design_system}
-
-{prompt_mode}
-{seed_guidance}
-{chapter_theme_block}
-
-【Current Slide (USER-CONFIRMED — STRICTLY FOLLOW)】
-- Page Type: {page_type.upper()}
-- User-Confirmed Visual: {visual_suggestion if visual_suggestion.strip() else "(empty — generate matching visual)"}
-- Layout: {layout_name}
-
-{neg_constraints}
-
-【Output Format】
-Your output MUST follow this structure:
-
-【TEXT TO RENDER】
-(List ALL text elements from the MANDATORY TEXT CONTENT section above, exactly as provided)
-
-【VISUAL SCENE】
-(Describe the visual composition, colors, textures, lighting, and styling that will bring the User-Confirmed Visual to life)
-
-CRITICAL: Output as plain text with section markers. No markdown formatting."""
-            else:
-                # Verbose mode: detailed prompt structure
-                user_prompt = f"""Generate a high-fidelity image generation prompt for a PPT slide.
-
-【MANDATORY TEXT CONTENT — MUST RENDER EXACTLY】
-The following text MUST appear in the generated image. Do NOT omit, summarize, or paraphrase.
-Include this section in your output as '【TEXT TO RENDER】' with all text listed below:
-
-{render_text_block}
-
-【VISUAL SCENE DESCRIPTION】
-{design_system}
-
-{prompt_mode}
-- Reference Image: Using '{os.path.basename(reference_image_path) if reference_image_path else "None"}' as style anchor.
-{seed_guidance}
-
-【Global Context (For Consistency)】
-{outline_summary}
-
-【CURRENT PAGE TARGET (USER-CONFIRMED — STRICTLY FOLLOW)】
-- Section: {page.get('section_title', 'General')}
-- Page Type: {page_type.upper()}
-- User-Confirmed Visual Description: {visual_suggestion}
-
-【VISUAL DESCRIPTION CONSTRAINT (CRITICAL — NON-NEGOTIABLE)】
-The "User-Confirmed Visual Description" above is the EXACT visual the user has approved for this slide. You MUST follow it precisely and preserve ALL key details. Your job is to:
-1. Preserve EVERY specific detail mentioned in the Visual Description (objects, actions, textures, compositions, emotional cues)
-2. Apply the Global Style (colors, fonts, lighting, texture) to render this exact scene
-3. Adapt the layout/placement only to fit the text content
-4. NEVER substitute a different visual metaphor or generalize specific details into vague descriptions
-5. If the Visual Description mentions specific text to be handwritten or displayed (e.g., "便签上用铅笔手写'胃肠溃疡哪家医院更好？'"), you MUST include that exact text in your TEXT TO RENDER section
-{vb_empty_warning if not visual_suggestion.strip() else ""}
-
-【VISUAL DIVERSITY RULE (CRITICAL)】
-5. Each slide MUST feature a visually DISTINCT primary subject. Do NOT reuse the same visual motif (e.g., stone monolith, glass panel, abstract cube) across consecutive slides.
-6. PREFER figurative, concrete imagery over abstract geometric shapes: human silhouettes in dramatic lighting, architectural elements (ruins, bridges, towers, corridors), natural landscapes (oceans, mountains, deserts, forests, storms), meaningful real-world objects (compass, hourglass, telescope, flame), aerial or cinematic perspectives.
-7. Abstract geometric forms (monoliths, cubes, spheres, glass planes) should appear on NO MORE than 20% of slides in the deck. They are acceptable occasionally for breathing/transition pages but must not be the default.
-8. If the Visual Diversity Strategy in the Manifesto lists specific motif categories, you MUST rotate through them across slides.
-{native_image_constraint}
-
-【Instruction】
-1. {type_instruction}
-2. Describe the visual scene in detail, preserving ALL specific elements from the User-Confirmed Visual Description.
-3. Plan text placement organically based on the meaning of the content.
-
-{neg_constraints}
-
-【Output Format】
-Your output MUST follow this structure:
-
-【TEXT TO RENDER】
-(List ALL text elements from the MANDATORY TEXT CONTENT section above, exactly as provided. Also include any text mentioned in the Visual Description that should be handwritten or displayed in the scene.)
-
-【VISUAL SCENE】
-(Describe the complete visual composition: layout, objects, actions, colors, textures, lighting, mood. Preserve ALL specific details from the User-Confirmed Visual Description. Do NOT generalize or simplify.)
-
-CRITICAL: Output as plain text with section markers. No markdown formatting (no bold, no italic, no bullet markers, no headings, no code blocks)."""
 
             tasks.append({
                 'skip_llm': False,
                 'page': page,
                 'layout_name': layout_name,
                 'reference_image_path': reference_image_path,
-                'system_prompt': system_prompt,
-                'user_prompt': user_prompt
+                'seed_family': seed_family,
+                'seed_role': seed_role,
+                'seed_usage_rule': seed_usage_rule,
+                'base_prompt': base_prompt
             })
 
         # 并发执行所有 LLM 调用
         from concurrent.futures import ThreadPoolExecutor, as_completed
         logger.info(f"🎨 Visual Agent: 正在并行生成 {len([t for t in tasks if not t['skip_llm']])} 页的视觉提示词...")
 
-        # 创建 Reviewer Agent 实例（用于每页 prompt 质量把关）
-        reviewer = ReviewerAgent(self.client)
-
         def generate_single_prompt(idx, task):
             if task.get('skip_llm'):
                 return idx, task['result']
             
             page = task['page']
+            text_content = page.get('text_content', {})
+            seed_role = task.get('seed_role', '')
+            seed_usage_rule = task.get('seed_usage_rule', '')
             try:
-                response = chat_completion_with_fallback(
-                    self.client, model=self.model, model_fallback=MODEL_FALLBACK_CHAIN,
-                    messages=[
-                        {"role": "system", "content": task['system_prompt']},
-                        {"role": "user", "content": task['user_prompt']}
-                    ],
-                    temperature=0.7
+                final_prompt = task['base_prompt']
+
+                # Reviewer 已降级为工具能力，这里做轻量审查与去冗余
+                reviewed_prompt = self.review_visual_prompt(
+                    visual_prompt=final_prompt,
+                    visual_suggestion=page.get('visual_description', page.get('visual_suggestion', '')),
+                    text_content=text_content
                 )
-                final_prompt = response.choices[0].message.content.strip()
 
-                # 清理 <think> 思考过程标签（MiniMax 模型特有）
-                final_prompt = re.sub(r'<think>.*?</think>', '', final_prompt, flags=re.DOTALL | re.IGNORECASE).strip()
+                if reviewed_prompt:
+                    final_prompt = reviewed_prompt
 
-                # 输出验证：检查并清理禁止的格式标记
+                # 清理 <think> 标签及禁止格式
                 forbidden_patterns = [
+                    (r'<think>.*?</think>', 'reasoning tag'),
                     (r'```', 'markdown code block'),
                     (r'\*\*[^*]+\*\*', 'markdown bold'),
                     (r'\*[^*]+\*', 'markdown italic'),
-                    (r'^[-•*]\s', 'bullet marker at line start'),
-                    (r'#{1,6}\s', 'markdown heading'),
                 ]
                 cleaned_prompt = final_prompt
                 for pattern, desc in forbidden_patterns:
                     if re.search(pattern, cleaned_prompt, re.MULTILINE):
-                        cleaned_prompt = re.sub(pattern, '', cleaned_prompt, flags=re.MULTILINE)
+                        cleaned_prompt = re.sub(pattern, '', cleaned_prompt, flags=re.MULTILINE | re.DOTALL)
                         logger.warning(f"⚠️ P{page.get('page_num')} 已清理禁止格式 ({desc})，已自动修复")
 
                 # 清理多余空行
                 cleaned_prompt = re.sub(r'\n{3,}', '\n\n', cleaned_prompt)
                 final_prompt = cleaned_prompt.strip()
 
-                # 验证输出格式：检查是否包含必要的 TEXT TO RENDER 部分
-                text_content = page.get('text_content', {})
-                headline = text_content.get('headline', '')
-                body = text_content.get('body', [])
-
-                # 检查标题是否在输出中
-                missing_text = []
-                if headline and headline not in final_prompt:
-                    missing_text.append(f'Headline: "{headline}"')
-
-                # 检查正文关键内容是否在输出中
-                for item in body[:2]:  # 只检查前2条，避免过度严格
-                    item_clean = item.lstrip('-•* ').strip()
-                    if item_clean and len(item_clean) > 10 and item_clean not in final_prompt:
-                        # 只检查较长的内容项，避免误报
-                        missing_text.append(f'Body: "{item_clean[:50]}..."')
-
-                # 如果缺失关键文字内容，进行补充
-                if missing_text:
-                    logger.warning(f"⚠️ P{page.get('page_num')} 输出缺失文字内容，正在补充...")
-
-                    # 构建补充的 TEXT TO RENDER 部分
-                    text_to_render = "\n\n【TEXT TO RENDER】\n"
-                    if headline:
-                        text_to_render += f'Headline: "{headline}"\n'
-                    if text_content.get('subhead'):
-                        text_to_render += f'Subtitle: "{text_content["subhead"]}"\n'
-                    if body:
-                        text_to_render += "Body:\n"
-                        for i, item in enumerate(body):
-                            item_clean = item.lstrip('-•* ').strip()
-                            text_to_render += f'  {i+1}. "{item_clean}"\n'
-
-                    # 如果输出中已经有 TEXT TO RENDER 标记，替换它；否则在开头添加
-                    if '【TEXT TO RENDER】' in final_prompt or 'TEXT TO RENDER' in final_prompt:
-                        # 替换现有的 TEXT TO RENDER 部分
-                        final_prompt = re.sub(
-                            r'【?TEXT TO RENDER】?.*?(?=【|$)',
-                            text_to_render,
-                            final_prompt,
-                            flags=re.DOTALL
-                        )
-                    else:
-                        # 在开头添加 TEXT TO RENDER 部分
-                        final_prompt = text_to_render + "\n" + final_prompt
-
-                # 调用 Reviewer Agent 进行质量把关
-                speaker_notes = page.get('speaker_notes', '')
-                reviewed_prompt = reviewer.review_visual_prompt(
-                    visual_prompt=final_prompt,
-                    headline=headline,
-                    body=body,
-                    speaker_notes=speaker_notes,
-                    style_config=style_config,
-                    global_style=manifesto,
-                    context=None
-                )
-                final_prompt = reviewed_prompt
+                if (
+                    not self._prompt_has_required_sections(final_prompt) or
+                    not self._prompt_preserves_required_text(final_prompt, text_content, page)
+                ):
+                    logger.warning(f"⚠️ P{page.get('page_num')} 审查后的 prompt 结构或文字不完整，回退到基础模板")
+                    final_prompt = task['base_prompt']
 
                 plan_item = page.copy()
+                plan_item['visual_description'] = page.get('visual_description', page.get('visual_suggestion', ''))
+                plan_item['final_visual_prompt'] = final_prompt
                 plan_item['visual_prompt'] = final_prompt
                 plan_item['reference_image'] = task['reference_image_path']
                 plan_item['layout'] = task['layout_name']
                 plan_item['logo_path'] = assets.get('logo_path') or (template_info.get('logo_path') if template_info else None)
                 plan_item['logo_location'] = template_info.get('logo_location', 'Top-Right') if template_info else 'Top-Right'
                 plan_item['style_config'] = style_config
+                plan_item['seed_family'] = task.get('seed_family', '')
+                plan_item['seed_role'] = seed_role
+                plan_item['seed_usage_rule'] = seed_usage_rule
 
                 return idx, plan_item
 
@@ -1290,9 +1461,13 @@ CRITICAL: Output as plain text with section markers. No markdown formatting (no 
                 logger.error(f"Prompt生成失败 (Page {page.get('page_num')}): {e}")
                 # fallback item
                 plan_item = page.copy()
-                plan_item['visual_prompt'] = "A professional slide background."
+                plan_item['visual_description'] = page.get('visual_description', page.get('visual_suggestion', ''))
+                plan_item['final_visual_prompt'] = "A professional slide background."
+                plan_item['visual_prompt'] = plan_item['final_visual_prompt']
                 plan_item['layout'] = task['layout_name']
                 plan_item['style_config'] = style_config
+                plan_item['seed_role'] = seed_role
+                plan_item['seed_usage_rule'] = seed_usage_rule
                 return idx, plan_item
 
         results = [None] * len(tasks)
@@ -1359,14 +1534,38 @@ CRITICAL: Output ONLY the raw image-generation prompt text. No markdown formatti
                     return {
                         "type": tpl_type,
                         "title": title,
+                        "visual_description": "空白模板页背景，供用户后续叠加自定义内容。",
+                        "final_visual_prompt": clean_prompt,
                         "visual_prompt": clean_prompt,
                         "reference_image": None,
                         "style_config": style_config,
-                        "layout": layout
+                        "layout": layout,
+                        "seed_role": "follow_up",
+                        "seed_usage_rule": "模板页：保持整套 deck 的风格一致，但不得引入额外文本或抢占内容层级。",
                     }
                 except Exception as e:
                     logger.error(f"模板页生成失败: {e}")
-                    return None
+                    palette = style_config.get("palette", [])
+                    base_bg = palette[0] if palette else "#F7F4EE"
+                    edge_accent = palette[2] if len(palette) > 2 else (palette[1] if len(palette) > 1 else "#C8B8A6")
+                    fallback_prompt = (
+                        f"A blank premium presentation slide background with a clean full-bleed surface in {base_bg}, "
+                        f"extremely subtle tonal variation, restrained edge accents in {edge_accent} confined to the outer frame, "
+                        "a calm editorial presentation mood, a spacious center reserved for future text, absolutely no visible text, "
+                        "no logos, no icons, no labels, no UI fragments, no clutter, and no decorative elements intruding into the central reading area."
+                    )
+                    return {
+                        "type": tpl_type,
+                        "title": title,
+                        "visual_description": "空白模板页背景，供用户后续叠加自定义内容。",
+                        "final_visual_prompt": fallback_prompt,
+                        "visual_prompt": fallback_prompt,
+                        "reference_image": None,
+                        "style_config": style_config,
+                        "layout": layout,
+                        "seed_role": "follow_up",
+                        "seed_usage_rule": "模板页：保持整套 deck 的风格一致，但不得引入额外文本或抢占内容层级。",
+                    }
 
             with ThreadPoolExecutor(max_workers=2) as executor:
                 f1 = executor.submit(generate_template, "template_content", "空白内容模板", "centered_headline")

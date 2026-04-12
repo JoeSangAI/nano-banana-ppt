@@ -6,9 +6,9 @@ import os
 import json
 import base64
 import logging
-import requests
+import re
 from pathlib import Path
-from typing import List, Dict, Optional, Union
+from typing import List, Dict, Optional
 from io import BytesIO
 from PIL import Image
 from pptx import Presentation
@@ -22,6 +22,40 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 from utils.bbox import (_fix_black_corners, _normalize_bbox, _fit_bbox_within_region, _bbox_overlap_area)
+from utils.provider_config import (
+    DEFAULT_IMAGE_MODEL,
+    DEFAULT_LLM_MODEL,
+    get_image_api_base,
+    get_image_api_key,
+)
+
+VALID_RESOLUTIONS = ("1K", "2K", "4K")
+LEGACY_LAYOUT_PROMPTS = {
+    "right_half": "the RIGHT SIDE of the image",
+    "left_half": "the LEFT SIDE of the image",
+    "center": "the CENTER area of the image",
+    "bottom_right": "the BOTTOM RIGHT corner",
+}
+BLEND_MODE_INSTRUCTIONS = {
+    "ORIGINAL_PRESENT": (
+        "ORIGINAL_PRESENT mode: The reference image must appear EXACTLY as-is with NO modifications. "
+        "Preserve its original aspect ratio, content, colors, people, objects, text, and spatial composition pixel-perfectly. "
+        "You may ONLY add subtle lighting adjustments or soft shadows to help it blend naturally with the background. "
+        "Do NOT crop, redraw, distort, recompose, or alter the reference image in any way."
+    ),
+    "ELEMENT_PRESERVE": (
+        "ELEMENT_PRESERVE mode: Preserve the MAIN SUBJECT/ELEMENT from the reference image (people, products, key objects) "
+        "but you may recompose the background, adjust lighting, change the environment, or reorganize secondary elements. "
+        "The recognizable main subject must remain intact and identifiable, but you have creative freedom with everything else. "
+        "You may adjust colors, add effects, or change the context while keeping the core element clear."
+    ),
+    "INTENT_FUSION": (
+        "INTENT_FUSION mode: Use the reference image ONLY for semantic inspiration and conceptual direction. "
+        "You should capture the MOOD, THEME, and GENERAL CONCEPT, but completely recreate the visual from scratch. "
+        "Do NOT preserve recognizable elements, specific objects, or identifiable features. "
+        "Think of the reference as a creative brief - understand its essence and generate something new that captures the same feeling."
+    ),
+}
 
 
 class PPTGenerator:
@@ -37,18 +71,179 @@ class PPTGenerator:
         from openai import OpenAI
         self._api_key = api_key
         self.client = OpenAI(api_key=api_key, base_url=api_base) if api_base else OpenAI(api_key=api_key)
-        self.text_model = "MiniMax-M2.7"
-        self.visual_director_model = "MiniMax-M2.7"
-        self.image_model = "gemini-3.1-flash-image-preview"  # 图片生成模型保持不变
+        self.text_model = DEFAULT_LLM_MODEL
+        self.visual_director_model = DEFAULT_LLM_MODEL
+        self.image_model = DEFAULT_IMAGE_MODEL
 
         # 图片生成客户端（DeerAPI）
-        image_gen_key = os.getenv("IMAGE_GEN_API_KEY") or api_key
-        image_gen_base = os.getenv("IMAGE_GEN_API_BASE") or "https://api.deerapi.com/v1"
+        image_gen_key = get_image_api_key(fallback=api_key)
+        image_gen_base = get_image_api_base()
         self._image_gen_client = OpenAI(api_key=image_gen_key, base_url=image_gen_base)
         self._image_gen_api_key = image_gen_key
 
         self.output_dir = Path(slides_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def _normalize_resolution(resolution: str) -> str:
+        normalized = (resolution or "1K").upper()
+        return normalized if normalized in VALID_RESOLUTIONS else "1K"
+
+    @staticmethod
+    def _describe_blend_area(img_conf: Dict) -> Optional[str]:
+        layout = img_conf.get('layout')
+        bbox = img_conf.get('bounding_box')
+
+        if bbox:
+            left_pct = int(bbox.get('left', 0) * 100)
+            top_pct = int(bbox.get('top', 0) * 100)
+            width_pct = int(bbox.get('width', 0) * 100)
+
+            if left_pct > 50:
+                position = "the RIGHT SIDE"
+            elif left_pct + width_pct < 50:
+                position = "the LEFT SIDE"
+            else:
+                position = "the CENTER"
+
+            return (
+                f"a massive space on {position} "
+                f"(starting {left_pct}% from left, {top_pct}% from top, spanning {width_pct}% width)"
+            )
+
+        return LEGACY_LAYOUT_PROMPTS.get(layout)
+
+    @staticmethod
+    def _build_native_image_tech_suffix(native_images: Optional[List[Dict]]) -> str:
+        native_images = native_images or []
+        if not native_images:
+            return ""
+
+        blend_areas = []
+        blend_instructions = []
+        for img_conf in native_images:
+            if img_conf.get('integration_mode', 'blend') != 'blend':
+                continue
+
+            area_text = PPTGenerator._describe_blend_area(img_conf)
+            if area_text:
+                blend_areas.append(area_text)
+
+            mode = str(img_conf.get('mode', 'INTENT_FUSION')).upper()
+            blend_instructions.append(BLEND_MODE_INSTRUCTIONS.get(mode, BLEND_MODE_INSTRUCTIONS["INTENT_FUSION"]))
+
+        if blend_areas:
+            areas_str = " and ".join(blend_areas)
+            return f" CRITICAL INSTRUCTION for reference images in {areas_str}: " + " ".join(blend_instructions)
+
+        num_imgs = len(native_images)
+        return (
+            f" CRITICAL INSTRUCTION: You have {num_imgs} reference images provided in this prompt. "
+            f"ALL {num_imgs} reference images must appear COMPLETELY and UNCHANGED in your output. "
+            "Each one is a REAL PHOTOGRAPH - do NOT modify, redraw, blend, distort, or alter any of them. "
+            "Their original content, colors, people, objects, text, and spatial composition must remain pixel-perfect. "
+            "You are ONLY generating the background - the reference images are the content and must appear exactly as they are. "
+            "Do not merge, composite, or regenerate the reference images in any way."
+        )
+
+    def _resolve_image_model(self) -> str:
+        is_openrouter = "openrouter" in str(getattr(self._image_gen_client, "base_url", "")).lower()
+        is_deerapi = "deerapi" in str(getattr(self._image_gen_client, "base_url", "")).lower()
+        if not (is_openrouter or is_deerapi):
+            raise RuntimeError(
+                f"图片生成已统一要求走 DeerAPI/OpenAI 兼容接口，当前 IMAGE_GEN_API_BASE 不受支持: {self._image_gen_client.base_url}"
+            )
+        if is_openrouter and not self.image_model.startswith("google/"):
+            return f"google/{self.image_model}"
+        return self.image_model
+
+    @staticmethod
+    def _build_image_messages(full_prompt: str, reference_images: Optional[List[Image.Image]]) -> List[Dict]:
+        messages = [{"role": "user", "content": [{"type": "text", "text": full_prompt}]}]
+        for ref_img in (reference_images or [])[:14]:
+            buffered = BytesIO()
+            ref_img.save(buffered, format="PNG")
+            img_b64 = base64.b64encode(buffered.getvalue()).decode()
+            messages[0]["content"].append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{img_b64}"}
+            })
+        return messages
+
+    @staticmethod
+    def _extract_image_content(message) -> str:
+        content = message.content
+        if content is not None:
+            return content or ""
+
+        if hasattr(message, "content") and isinstance(getattr(message, "content", None), list):
+            for part in message.content:
+                if isinstance(part, dict):
+                    text = part.get("text") or (
+                        part.get("type") == "image_url" and part.get("image_url", {}).get("url")
+                    ) or ""
+                    if text and "base64," in str(text):
+                        return text
+
+        raise ValueError("DeerAPI/OpenRouter 未返回可解析的图片内容")
+
+    @staticmethod
+    def hex_to_rgb(hex_color: str) -> RGBColor:
+        hex_color = hex_color.lstrip('#')
+        return RGBColor(int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16))
+
+    @staticmethod
+    def _clean_font_name(raw: str) -> str:
+        """Extract the first usable font name from descriptive style strings."""
+        KNOWN_FONTS = {
+            'arial', 'georgia', 'inter', 'helvetica', 'helvetica neue',
+            'times new roman', 'verdana', 'calibri', 'lato', 'montserrat',
+            'noto sans', 'noto serif', 'noto sans sc', 'noto serif sc',
+            'roboto', 'open sans', 'quicksand', 'nunito', 'cinzel',
+            'playfair display', 'cormorant garamond', 'dm sans', 'dm serif display',
+            'source sans pro', 'source serif pro', 'raleway', 'oswald',
+            'alibaba puhuiti', 'pingfang sc', 'pingfang tc', 'pingfang hk',
+            'hiragino sans gb', 'hiragino mincho pron', 'heiti sc', 'heiti tc',
+            'songti sc', 'kaiti sc', 'microsoft yahei', 'simsun', 'simhei',
+            'noto sans cjk sc', 'noto serif cjk sc', 'source han sans sc',
+            'source han serif sc', 'zcool qingke huangyou', 'zcool xiaowei',
+            'ma shan zheng', 'long cang', 'zhi mang xing',
+        }
+        parts = [p.strip() for p in raw.split('/')]
+        cleaned = []
+        for part in parts:
+            name = re.sub(r'\(.*?\)', '', part).strip()
+            if name:
+                cleaned.append(name)
+        for name in cleaned:
+            if name.lower() in KNOWN_FONTS:
+                return name
+        return cleaned[0] if cleaned else 'Arial'
+
+    @staticmethod
+    def _hex_to_rgb_tuple(hex_color: str) -> tuple[int, int, int]:
+        hex_color = hex_color.lstrip('#')
+        return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+
+    @classmethod
+    def _blend_hex(cls, hex_a: str, hex_b: str, ratio: float = 0.7) -> str:
+        ra, ga, ba = cls._hex_to_rgb_tuple(hex_a)
+        rb, gb, bb = cls._hex_to_rgb_tuple(hex_b)
+        r = int(ra * ratio + rb * (1 - ratio))
+        g = int(ga * ratio + gb * (1 - ratio))
+        b = int(ba * ratio + bb * (1 - ratio))
+        return f'#{r:02X}{g:02X}{b:02X}'
+
+    @classmethod
+    def _luminance(cls, hex_color: str) -> float:
+        r, g, b = cls._hex_to_rgb_tuple(hex_color)
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+    @classmethod
+    def _saturation(cls, hex_color: str) -> float:
+        r, g, b = [x / 255.0 for x in cls._hex_to_rgb_tuple(hex_color)]
+        cmax, cmin = max(r, g, b), min(r, g, b)
+        return (cmax - cmin) * 255
     
     def generate_image(self, description: str, aspect_ratio: str = "16:9", reference_images: List[Image.Image] = None, is_background_only: bool = False, resolution: str = "1K", native_images: List[Dict] = None) -> Image.Image:
         """
@@ -56,11 +251,7 @@ class PPTGenerator:
         使用 Google REST API 直接调用（兼容 nano banana）
         resolution: "1K" | "2K" | "4K"，默认 1K
         """
-        import requests
-
-        resolution = (resolution or "1K").upper()
-        if resolution not in ("1K", "2K", "4K"):
-            resolution = "1K"
+        resolution = self._normalize_resolution(resolution)
 
         logger.info(f"正在生成图片 ({resolution}): {description[:50]}...")
         if reference_images:
@@ -68,251 +259,34 @@ class PPTGenerator:
 
         # VisualAgent 已构造完整 prompt，此处仅追加分辨率等技术参数
         tech_suffix = f"\n\nTechnical: aspect ratio {aspect_ratio}, {resolution} resolution, sharp text rendering. CRITICAL: No black blocks, no solid black rectangles, seamless full-bleed composition."
-        
-        # Inject smart whitespace instructions based on native_images array
-        if native_images and len(native_images) > 0:
-            blend_areas = []
-            for idx, img_conf in enumerate(native_images):
-                layout = img_conf.get('layout')
-                bbox = img_conf.get('bounding_box')
-                integration_mode = img_conf.get('integration_mode', 'blend')
-
-                area_text = None
-                if bbox:
-                    # Translate bounding box to natural language roughly
-                    left_pct = int(bbox.get('left', 0) * 100)
-                    top_pct = int(bbox.get('top', 0) * 100)
-                    w_pct = int(bbox.get('width', 0) * 100)
-                    h_pct = int(bbox.get('height', 0) * 100)
-
-                    # Provide an even stronger spatial instruction
-                    if left_pct > 50:
-                        position = "the RIGHT SIDE"
-                    elif left_pct + w_pct < 50:
-                        position = "the LEFT SIDE"
-                    else:
-                        position = "the CENTER"
-
-                    area_text = f"a massive space on {position} (starting {left_pct}% from left, {top_pct}% from top, spanning {w_pct}% width)"
-                elif layout:
-                    # Legacy fallback
-                    layout_prompts = {
-                        "right_half": "the RIGHT SIDE of the image",
-                        "left_half": "the LEFT SIDE of the image",
-                        "center": "the CENTER area of the image",
-                        "bottom_right": "the BOTTOM RIGHT corner"
-                    }
-                    if layout in layout_prompts:
-                        area_text = layout_prompts[layout]
-
-                if area_text and integration_mode == 'blend':
-                    blend_areas.append(area_text)
-
-            if blend_areas:
-                areas_str = " and ".join(blend_areas)
-                # 根据图片模式生成不同的融合策略
-                blend_instructions = []
-                for img_conf in native_images:
-                    if img_conf.get('integration_mode', 'overlay') != 'blend':
-                        continue
-                    mode = img_conf.get('mode', 'INTENT_FUSION')
-
-                    if mode == 'ORIGINAL_PRESENT':
-                        # 原图呈现：保留长宽比，轻微加工
-                        blend_instructions.append(
-                            "ORIGINAL_PRESENT mode: The reference image must appear EXACTLY as-is with NO modifications. "
-                            "Preserve its original aspect ratio, content, colors, people, objects, text, and spatial composition pixel-perfectly. "
-                            "You may ONLY add subtle lighting adjustments or soft shadows to help it blend naturally with the background. "
-                            "Do NOT crop, redraw, distort, recompose, or alter the reference image in any way."
-                        )
-                    elif mode == 'ELEMENT_PRESERVE':
-                        # 元素保留：保留主体，允许重组
-                        blend_instructions.append(
-                            "ELEMENT_PRESERVE mode: Preserve the MAIN SUBJECT/ELEMENT from the reference image (people, products, key objects) "
-                            "but you may recompose the background, adjust lighting, change the environment, or reorganize secondary elements. "
-                            "The recognizable main subject must remain intact and identifiable, but you have creative freedom with everything else. "
-                            "You may adjust colors, add effects, or change the context while keeping the core element clear."
-                        )
-                    else:  # INTENT_FUSION (default)
-                        # 意向融合：只取语义，不保留可识别性
-                        blend_instructions.append(
-                            "INTENT_FUSION mode: Use the reference image ONLY for semantic inspiration and conceptual direction. "
-                            "You should capture the MOOD, THEME, and GENERAL CONCEPT, but completely recreate the visual from scratch. "
-                            "Do NOT preserve recognizable elements, specific objects, or identifiable features. "
-                            "Think of the reference as a creative brief - understand its essence and generate something new that captures the same feeling."
-                        )
-
-                if blend_instructions:
-                    tech_suffix += f" CRITICAL INSTRUCTION for reference images in {areas_str}: " + " ".join(blend_instructions)
-                else:
-                    # Fallback to old behavior if no mode specified
-                    tech_suffix += f" CRITICAL INSTRUCTION: This image must contain ALL of the provided reference images (the ones in this prompt). Each reference image is a REAL PHOTOGRAPH that must appear COMPLETELY and UNCHANGED in the final output - do NOT modify, crop, redraw, distort, or alter any reference image. Keep their original content, colors, people, objects, text, and spatial composition exactly as-is. The reference images are the CONTENT of this slide - you are only generating the background environment around them. If a reference image shows a person, product, or scene, that exact person/product/scene must appear unchanged in your output."
-            elif native_images and len(native_images) > 0:
-                # 有原生图片但没有明确位置时，让 AI 根据图片内容自动决定最佳位置
-                num_imgs = len(native_images)
-                tech_suffix += f" CRITICAL INSTRUCTION: You have {num_imgs} reference images provided in this prompt. ALL {num_imgs} reference images must appear COMPLETELY and UNCHANGED in your output. Each one is a REAL PHOTOGRAPH - do NOT modify, redraw, blend, distort, or alter any of them. Their original content, colors, people, objects, text, and spatial composition must remain pixel-perfect. You are ONLY generating the background - the reference images are the content and must appear exactly as they are. Do not merge, composite, or regenerate the reference images in any way."
-
+        tech_suffix += self._build_native_image_tech_suffix(native_images)
 
         full_prompt = description + tech_suffix
+        api_model = self._resolve_image_model()
+        messages = self._build_image_messages(full_prompt, reference_images)
 
-        # 使用 Google REST API 直接调用
-        api_key = self.client.api_key if hasattr(self.client, 'api_key') else None
-        if not api_key:
-            api_key = getattr(self, '_api_key', None)
-
-        if not api_key:
-            raise ValueError("无法获取 API Key")
-
-        is_openrouter = "openrouter" in str(getattr(self._image_gen_client, "base_url", "")).lower()
-        is_deerapi = "deerapi" in str(getattr(self._image_gen_client, "base_url", "")).lower()
-
-        if is_openrouter or is_deerapi:
-            # 适配 OpenRouter 和 DeerAPI 的 OpenAI 格式调用
-            # OpenRouter 需要 google/ 前缀，DeerAPI 直接使用模型名
-            if is_openrouter:
-                or_model = f"google/{self.image_model}" if not self.image_model.startswith("google/") else self.image_model
-            else:  # DeerAPI
-                or_model = self.image_model
-            
-            messages = [{"role": "user", "content": [{"type": "text", "text": full_prompt}]}]
-            if reference_images:
-                MAX_REFERENCE_IMAGES = 14  # Gemini 3 series via DeerAPI supports up to 14 reference images
-                for ref_img in reference_images[:MAX_REFERENCE_IMAGES]:
-                    buffered = BytesIO()
-                    ref_img.save(buffered, format="PNG")
-                    img_b64 = base64.b64encode(buffered.getvalue()).decode()
-                    messages[0]["content"].append({
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{img_b64}"}
-                    })
-            
-            import time
-            for attempt in range(5):
-                try:
-                    resp = self._image_gen_client.chat.completions.create(
-                        model=or_model,
-                        messages=messages,
-                        extra_body={"image_config": {"aspect_ratio": aspect_ratio, "imageSize": resolution}}
-                    )
-                    content = resp.choices[0].message.content
-                    if content is None:
-                        # 部分接口把图片放在 message.content 的 list 里
-                        msg = resp.choices[0].message
-                        if hasattr(msg, "content") and isinstance(getattr(msg, "content", None), list):
-                            for part in msg.content:
-                                if isinstance(part, dict):
-                                    text = part.get("text") or part.get("type") == "image_url" and part.get("image_url", {}).get("url") or ""
-                                    if text and "base64," in str(text):
-                                        content = text
-                                        break
-                        if content is None:
-                            raise ValueError("OpenRouter 未返回文本内容，可能当前模型不支持绘图或返回格式变更")
-                    content = content or ""
-                    # 提取 base64 图片数据
-                    import re
-                    match = re.search(r'data:image/[a-zA-Z]+;base64,([a-zA-Z0-9+/=]+)', content)
-                    if match:
-                        image_data = base64.b64decode(match.group(1))
-                        return Image.open(BytesIO(image_data))
-                    else:
-                        raise ValueError("OpenRouter 返回的图像格式异常或无法解析 base64")
-                except Exception as e:
-                    logger.warning(f"OpenRouter 绘图失败 (尝试 {attempt+1}): {e}")
-                    if attempt == 4: raise
-                    time.sleep(2)
-        else:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.image_model}:generateContent?key={api_key}"
-            headers = {"Content-Type": "application/json"}
-    
-            # 构建 parts 数组：先文本，后参考图片
-            parts = [{"text": full_prompt}]
-    
-            # 参考图片：[0]=模板风格图(可选) + [1..N]=原生融合图，Gemini API 最多支持 4 张
-        MAX_REFERENCE_IMAGES = 14  # Gemini 3 series via DeerAPI supports up to 14 reference images
-        if reference_images:
-            for ref_img in reference_images[:MAX_REFERENCE_IMAGES]:
-                buffered = BytesIO()
-                ref_img.save(buffered, format="PNG")
-                img_b64 = base64.b64encode(buffered.getvalue()).decode()
-                parts.append({
-                    "inlineData": {
-                        "mimeType": "image/png",
-                        "data": img_b64
-                    }
-                })
-
-        # generationConfig: 支持 1K/2K/4K 分辨率
-        generation_config = {
-            "responseModalities": ["IMAGE"],
-            "imageConfig": {
-                "aspectRatio": aspect_ratio,
-                "imageSize": resolution
-            }
-        }
-        payload = {
-            "contents": [{"parts": parts}],
-            "generationConfig": generation_config,
-        }
-        
-        # 添加重试机制（增加延迟，避免限流）
-        max_retries = 5  # Increased from 3 to 5
         import time
-        
-        if hasattr(self, '_last_request_time'):
-            elapsed = time.time() - self._last_request_time
-            if elapsed < 1:
-                time.sleep(1 - elapsed)
-        
-        for attempt in range(max_retries):
+
+        for attempt in range(5):
             try:
-                response = requests.post(url, headers=headers, json=payload, timeout=180)
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    candidates = result.get('candidates', [])
-                    
-                    if not candidates:
-                        # Log the full result for debugging
-                        logger.warning(f"Attempt {attempt + 1}: Empty candidates in response: {str(result)[:200]}...")
-                        raise ValueError("生成失败：返回结果为空")
-                    
-                    content = candidates[0].get('content', {})
-                    parts = content.get('parts', [])
-                    
-                    for part in parts:
-                        # 兼容 REST API 可能返回的两种字段格式
-                        img_b64 = None
-                        if 'inlineData' in part:
-                            img_b64 = part['inlineData']['data']
-                        elif 'inline_data' in part:
-                            img_b64 = part['inline_data']['data']
-                        
-                        if img_b64:
-                            img_data = base64.b64decode(img_b64)
-                            image = Image.open(BytesIO(img_data)).convert("RGB")
-                            logger.info(f"图片生成成功: {image.size}")
-                            self._last_request_time = time.time()
-                            return image
-                    
-                    raise ValueError("未找到图片数据")
-                else:
-                    error_text = response.text
-                    if attempt < max_retries - 1:
-                        wait_time = 2 * (2 ** attempt)  # 2s, 4s, 8s, 16s...
-                        logger.warning(f"API 请求失败 ({response.status_code})，重试 {attempt + 1}/{max_retries} (等待 {wait_time}s)...")
-                        time.sleep(wait_time)
-                        continue
-                    raise Exception(f"API 请求失败 ({response.status_code}): {error_text}")
-                    
-            except (requests.exceptions.SSLError, requests.exceptions.ConnectionError, ValueError) as e:
-                if attempt < max_retries - 1:
-                    wait_time = 2 * (2 ** attempt)
-                    logger.warning(f"请求异常 ({type(e).__name__})，重试 {attempt + 1}/{max_retries} (等待 {wait_time}s)...: {e}")
-                    time.sleep(wait_time)
-                    continue
-                raise
-                
-        # 如果所有重试都失败
+                resp = self._image_gen_client.chat.completions.create(
+                    model=api_model,
+                    messages=messages,
+                    extra_body={"image_config": {"aspect_ratio": aspect_ratio, "imageSize": resolution}}
+                )
+                content = self._extract_image_content(resp.choices[0].message)
+                match = re.search(r'data:image/[a-zA-Z]+;base64,([a-zA-Z0-9+/=]+)', content)
+                if not match:
+                    raise ValueError("DeerAPI/OpenRouter 返回的图像格式异常或无法解析 base64")
+
+                image_data = base64.b64decode(match.group(1))
+                return Image.open(BytesIO(image_data))
+            except Exception as e:
+                logger.warning(f"DeerAPI/OpenRouter 绘图失败 (尝试 {attempt + 1}): {e}")
+                if attempt == 4:
+                    raise
+                time.sleep(2)
+
         raise Exception("图片生成失败：所有重试均失败")
     
     def upscale_image(self, image_path: str, resolution: str = "4K") -> bool:
@@ -373,56 +347,36 @@ class PPTGenerator:
             "generationConfig": generation_config,
         }
 
-        api_key = self.client.api_key if hasattr(self.client, 'api_key') else getattr(self, '_api_key', None)
-        if not api_key:
-            logger.error("❌ 无法获取 API Key")
-            return False
-
-        api_base = self.client.base_url if hasattr(self.client, 'base_url') else "https://generativelanguage.googleapis.com/v1beta/openai"
-        # 针对 Gemini API，直接构造 REST URL (非 OpenAI 兼容 URL)
-        # 如果提供了 openai base url，提取主机名并重组
-        if "googleapis.com" in str(api_base):
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.image_model}:generateContent?key={api_key}"
-        else:
-            # 对于第三方反代，假设它是直接反代的
-            base = str(api_base).replace("/openai/v1", "").replace("/openai", "")
-            url = f"{base}/models/{self.image_model}:generateContent?key={api_key}"
-
-        headers = {"Content-Type": "application/json"}
-        
-        # 重试逻辑
         max_retries = 5
         base_wait = 3
         for attempt in range(max_retries):
             try:
-                response = requests.post(url, headers=headers, json=payload, timeout=180)
-                if response.status_code == 200:
-                    data = response.json()
-                    candidates = data.get("candidates", [])
-                    if candidates:
-                        parts = candidates[0].get("content", {}).get("parts", [])
-                        for part in parts:
-                            inline_data = part.get("inlineData") or part.get("inline_data")
-                            if inline_data:
-                                img_bytes = base64.b64decode(inline_data["data"])
-                                img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-                                # 覆盖保存原图
-                                img.save(image_path)
-                                logger.info(f"✅ 成功放大图片并覆盖保存: {image_path}")
-                                return True
-                    logger.error(f"❌ API返回异常数据格式: {str(data)[:200]}...")
-                elif response.status_code == 429:
-                    wait_time = base_wait * (2 ** attempt)
-                    logger.warning(f"⚠️ API 速率限制 (429)，等待 {wait_time} 秒后重试...")
-                    time.sleep(wait_time)
-                    continue
-                else:
-                    logger.error(f"❌ API请求失败 ({response.status_code}): {response.text}")
-                    if attempt < max_retries - 1:
-                        wait_time = base_wait * (2 ** attempt)
-                        time.sleep(wait_time)
-                        continue
-                    break
+                response = self._image_gen_client.chat.completions.create(
+                    model=self.image_model,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": prompt},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {"url": f"data:{mime_type};base64,{b64_data}"}
+                                }
+                            ]
+                        }
+                    ],
+                    extra_body={"image_config": {"aspect_ratio": "16:9", "imageSize": resolution}}
+                )
+                content = response.choices[0].message.content or ""
+                match = re.search(r'data:image/[a-zA-Z]+;base64,([a-zA-Z0-9+/=]+)', content)
+                if not match:
+                    raise ValueError("DeerAPI 返回的放大结果中未找到图片 base64 数据")
+
+                img_bytes = base64.b64decode(match.group(1))
+                img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+                img.save(image_path)
+                logger.info(f"✅ 成功放大图片并覆盖保存: {image_path}")
+                return True
             except Exception as e:
                 logger.error(f"❌ 图片放大生成出错: {e}")
                 if attempt < max_retries - 1:
@@ -513,7 +467,7 @@ Example:
             logger.info(f"👁️ 正在使用视觉模型分析底层图片，寻找完美的排版位置...")
 
             # 适配 OpenRouter 前缀
-            api_model = "gemini-3.1-pro-preview"
+            api_model = DEFAULT_LLM_MODEL
             if "openrouter" in str(self.client.base_url).lower() and not api_model.startswith("google/"):
                 api_model = f"google/{api_model}"
 
@@ -570,20 +524,6 @@ Example:
             prs = Presentation()
             prs.slide_width = Inches(16)
             prs.slide_height = Inches(9)
-            
-        # Helper: Find layout by name
-        def get_layout(prs, layout_name_hints):
-            for layout in prs.slide_layouts:
-                name = layout.name.lower()
-                for hint in layout_name_hints:
-                    if hint.lower() in name:
-                        return layout
-            return prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[0] # Fallback
-            
-        # Helper: Hex to RGB
-        def hex_to_rgb(hex_color):
-            hex_color = hex_color.lstrip('#')
-            return RGBColor(int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16))
 
         for i, slide_plan in enumerate(visual_plan):
             page_type = slide_plan.get('type', 'content').lower()
@@ -612,81 +552,21 @@ Example:
             if page_type.startswith('template_'):
                 logger.info(f"✨ 为模板页 {page_num} 添加可编辑文本框和装饰...")
 
-                def _clean_font_name(raw: str) -> str:
-                    """Extract first usable font name from descriptive style library strings.
-                    e.g. 'Tiempos Text / Copernicus / Georgia (for Headings ONLY)' → 'Georgia'
-                    Prefers well-known cross-platform fonts when multiple options are listed.
-                    Always returns the raw first token if none match the known list —
-                    letting PPTX fall back gracefully on systems missing that font.
-                    """
-                    import re
-                    KNOWN_FONTS = {
-                        # Western
-                        'arial', 'georgia', 'inter', 'helvetica', 'helvetica neue',
-                        'times new roman', 'verdana', 'calibri', 'lato', 'montserrat',
-                        'noto sans', 'noto serif', 'noto sans sc', 'noto serif sc',
-                        'roboto', 'open sans', 'quicksand', 'nunito', 'cinzel',
-                        'playfair display', 'cormorant garamond', 'dm sans', 'dm serif display',
-                        'source sans pro', 'source serif pro', 'raleway', 'oswald',
-                        # Chinese / CJK
-                        'alibaba puhuiti', 'pingfang sc', 'pingfang tc', 'pingfang hk',
-                        'hiragino sans gb', 'hiragino mincho pron', 'heiti sc', 'heiti tc',
-                        'songti sc', 'kaiti sc', 'microsoft yahei', 'simsun', 'simhei',
-                        'noto sans cjk sc', 'noto serif cjk sc', 'source han sans sc',
-                        'source han serif sc', 'zcool qingke huangyou', 'zcool xiaowei',
-                        'ma shan zheng', 'long cang', 'zhi mang xing',
-                    }
-                    parts = [p.strip() for p in raw.split('/')]
-                    cleaned = []
-                    for p in parts:
-                        name = re.sub(r'\(.*?\)', '', p).strip()
-                        if name:
-                            cleaned.append(name)
-                    # Prefer known/safe fonts from the list
-                    for name in cleaned:
-                        if name.lower() in KNOWN_FONTS:
-                            return name
-                    # No known font found — return the first candidate as-is
-                    return cleaned[0] if cleaned else 'Arial'
-
                 raw_fonts = style_config.get('fonts', ['Arial', 'Arial'])
-                title_font = _clean_font_name(raw_fonts[0]) if raw_fonts else 'Arial'
-                body_font = _clean_font_name(raw_fonts[-1]) if raw_fonts else 'Arial'
+                title_font = self._clean_font_name(raw_fonts[0]) if raw_fonts else 'Arial'
+                body_font = self._clean_font_name(raw_fonts[-1]) if raw_fonts else 'Arial'
                 palette = style_config.get('palette', ['#FFFFFF', '#000000', '#CCCCCC', '#666666'])
 
                 bg_color_hex = palette[0] if palette else '#FFFFFF'
 
-                def _hex_to_rgb_tuple(hex_col):
-                    h = hex_col.lstrip('#')
-                    return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
-
-                def _blend_hex(hex_a, hex_b, ratio=0.7):
-                    """Blend hex_a toward hex_b by ratio (0.7 = 70% a, 30% b)."""
-                    ra, ga, ba = _hex_to_rgb_tuple(hex_a)
-                    rb, gb, bb = _hex_to_rgb_tuple(hex_b)
-                    r = int(ra * ratio + rb * (1 - ratio))
-                    g = int(ga * ratio + gb * (1 - ratio))
-                    b = int(ba * ratio + bb * (1 - ratio))
-                    return f'#{r:02X}{g:02X}{b:02X}'
-
-                def _luminance(hex_col):
-                    r, g, b = _hex_to_rgb_tuple(hex_col)
-                    return 0.2126 * r + 0.7152 * g + 0.0722 * b
-
-                def _saturation(hex_col):
-                    """Simple HSL-based saturation (0-255 scale)."""
-                    r, g, b = [x / 255.0 for x in _hex_to_rgb_tuple(hex_col)]
-                    cmax, cmin = max(r, g, b), min(r, g, b)
-                    return (cmax - cmin) * 255
-
-                bg_lum = _luminance(bg_color_hex)
+                bg_lum = self._luminance(bg_color_hex)
 
                 # --- 4-Level Color Hierarchy (aligned with AI-rendered pages) ---
                 # palette convention: [0]=bg, [1]=primary text (sent to Gemini as "Primary Text"),
                 # [2+]=accent/secondary colors.
                 # Use palette[1] directly as title color to match AI pages exactly.
                 text_color_hex = palette[1] if len(palette) > 1 else '#222222'
-                if abs(bg_lum - _luminance(text_color_hex)) < 60:
+                if abs(bg_lum - self._luminance(text_color_hex)) < 60:
                     text_color_hex = '#222222' if bg_lum > 128 else '#FFFFFF'
 
                 # Accent: pick the most saturated non-bg non-text palette color
@@ -695,8 +575,8 @@ Example:
                 for c in palette:
                     if c.lower() == bg_color_hex.lower() or c.lower() == text_color_hex.lower():
                         continue
-                    sat = _saturation(c)
-                    contrast = abs(bg_lum - _luminance(c))
+                    sat = self._saturation(c)
+                    contrast = abs(bg_lum - self._luminance(c))
                     score = sat * 0.6 + contrast * 0.4
                     if score > best_accent_score:
                         best_accent_score = score
@@ -706,20 +586,20 @@ Example:
                 accent_color_hex = best_accent_hex
 
                 # L1 Title: primary text color (matches AI pages)
-                text_color = hex_to_rgb(text_color_hex)
+                text_color = self.hex_to_rgb(text_color_hex)
                 # L2 Subtitle: title blended slightly toward bg (90:10)
-                subtitle_color_hex = _blend_hex(text_color_hex, bg_color_hex, ratio=0.88)
-                subtitle_color = hex_to_rgb(subtitle_color_hex)
+                subtitle_color_hex = self._blend_hex(text_color_hex, bg_color_hex, ratio=0.88)
+                subtitle_color = self.hex_to_rgb(subtitle_color_hex)
                 # L3 Body: softer blend (72:28)
-                body_color_hex = _blend_hex(text_color_hex, bg_color_hex, ratio=0.72)
-                body_text_color = hex_to_rgb(body_color_hex)
+                body_color_hex = self._blend_hex(text_color_hex, bg_color_hex, ratio=0.72)
+                body_text_color = self.hex_to_rgb(body_color_hex)
                 # L4 Muted/placeholder: even lighter (55:45)
-                muted_color_hex = _blend_hex(text_color_hex, bg_color_hex, ratio=0.55)
-                muted_color = hex_to_rgb(muted_color_hex)
+                muted_color_hex = self._blend_hex(text_color_hex, bg_color_hex, ratio=0.55)
+                muted_color = self.hex_to_rgb(muted_color_hex)
                 # Accent color for decorative elements, tags, bullet markers
-                accent_color = hex_to_rgb(accent_color_hex)
+                accent_color = self.hex_to_rgb(accent_color_hex)
                 # Tag label text: ensure contrast against accent background
-                tag_text_color = hex_to_rgb('#FFFFFF') if _luminance(accent_color_hex) < 150 else hex_to_rgb('#222222')
+                tag_text_color = self.hex_to_rgb('#FFFFFF') if self._luminance(accent_color_hex) < 150 else self.hex_to_rgb('#222222')
 
                 logger.info(f"模板字体: 标题={title_font}, 正文={body_font}")
                 logger.info(f"模板配色: 标题={text_color_hex}, 正文={body_color_hex}, 装饰={accent_color_hex}")
@@ -887,8 +767,8 @@ Example:
                     # Right Image Placeholder — muted color (L4)
                     right_box = slide.shapes.add_shape(1, Inches(8.5), Inches(2.5), Inches(6.5), Inches(5.5))
                     right_box.fill.solid()
-                    placeholder_bg = _blend_hex(bg_color_hex, text_color_hex, ratio=0.92)
-                    right_box.fill.fore_color.rgb = hex_to_rgb(placeholder_bg)
+                    placeholder_bg = self._blend_hex(bg_color_hex, text_color_hex, ratio=0.92)
+                    right_box.fill.fore_color.rgb = self.hex_to_rgb(placeholder_bg)
                     right_box.line.color.rgb = accent_color
                     right_box.line.width = Pt(1)
                     right_box.line.dash_style = 4
