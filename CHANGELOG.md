@@ -2,6 +2,48 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v4.0.0] - 2026-04-15
+
+🚀 **PM Agent 驱动架构重构 (PM Agent-Driven Architecture Refactoring)**
+
+本次更新是一次重大架构升级，从单体式脚本重构为 PM Agent 驱动的多 Agent 协作架构，实现了性能和可维护性的双重提升。
+
+### 🏗️ 架构升级 (Architecture)
+
+*   **PM Agent 驱动模式**：引入 PM Agent 作为核心编排者，统一管理项目状态、智能决策流程、协调多个专业 Agent
+*   **统一状态管理**：通过 `ProjectState` 类统一管理项目状态，替代分散的状态文件
+*   **对话式交互**：新增 `update_state()` 方法，支持在任何阶段通过对话更新 logo、设计指导、视觉约束等
+*   **多 Agent 协作**：Content Agent、Visual Agent、Template Agent、Executor Agent 各司其职
+
+### ⚡ 性能优化 (Performance)
+
+*   **并行化视觉描述生成**：将 34 页拆分为 6 个批次并行生成，使用 4 个并发 worker
+*   **并行化图片分析**：使用 `ThreadPoolExecutor` 并行分析候选图片
+*   **删除冗余审查**：移除 PromptGuard 深度审查（~220 行代码），保留轻量格式检查
+*   **智能跳过机制**：用户确认后自动跳过重复审查
+*   **总耗时优化**：从 4 小时降至 30-60 分钟（提升 75-87%）
+
+### ✨ 功能完善 (Features)
+
+*   **Logo 传递修复**：修复 logo 在多阶段传递中丢失的问题，支持从 assets、meta、template_info 多源读取
+*   **设计指导支持**：支持通过 `style_guide_file` 参数加载外部设计指导文档
+*   **视觉约束传递**：支持 `visual_constraints` 参数（如"插图使用写实风格"）贯穿整个生成流程
+*   **状态持久化**：所有对话式更新的状态都会持久化到 `_content_state.json`
+
+### 🧹 代码质量 (Code Quality)
+
+*   **删除僵尸模块**：移除从未使用的 `utils/brief_manager.py`（-150 行）
+*   **重构长方法**：将 68 行的 `update_state()` 拆分为 3 个子方法
+*   **简化并行调用**：使用 `functools.partial` 简化参数传递
+*   **净减少代码**：总计减少 ~220 行代码，提升可维护性
+*   **清理临时文件**：删除备份文件、缓存目录、循环符号链接
+
+### 🔧 Breaking Changes
+
+*   删除 `utils/brief_manager.py` 模块
+*   删除 PromptGuard 深度审查相关函数
+*   修改 `generate_per_slide_visual_suggestions()` 函数签名（新增 `visual_constraints` 参数）
+
 ## [v3.1.4] - 2026-03-15
 
 📖 **Skill 文档与 Agent 工作流更新 (Skill & Workflow Documentation)**
