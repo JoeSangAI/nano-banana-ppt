@@ -11,6 +11,7 @@ import io
 # 添加路径以便导入
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..')))
 from tools.nano_banana_ppt.core.generator import PPTGenerator
+from tools.nano_banana_ppt.utils.provider_config import get_llm_api_base, get_llm_api_key
 
 def regenerate_failed_pages(pptx_file: str, plan_file: str, failed_pages: list = None):
     """
@@ -55,8 +56,8 @@ def regenerate_failed_pages(pptx_file: str, plan_file: str, failed_pages: list =
     
     print(f"发现 {len(failed_pages)} 页需要重新生成: {failed_pages}")
     
-    api_key = os.getenv("OPENAI_API_KEY")
-    api_base = os.getenv("OPENAI_API_BASE")
+    api_key = get_llm_api_key()
+    api_base = get_llm_api_base()
     generator = PPTGenerator(api_key, api_base)
     
     # 重新生成
@@ -68,7 +69,8 @@ def regenerate_failed_pages(pptx_file: str, plan_file: str, failed_pages: list =
         print(f"\n正在重新生成第 {page_num} 页...")
         
         try:
-            image = generator.generate_image(page['visual_prompt'], aspect_ratio="16:9")
+            prompt = page.get('final_visual_prompt') or page.get('visual_prompt')
+            image = generator.generate_image(prompt, aspect_ratio="16:9")
             
             temp_path = generator.output_dir / f"temp_regen_{page_num}.png"
             image.save(temp_path, "PNG")

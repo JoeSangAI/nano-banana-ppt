@@ -10,6 +10,7 @@ from PIL import Image
 from openai import OpenAI
 
 from .llm_client import chat_completion_with_fallback, MODEL_FALLBACK_CHAIN
+from .provider_config import DEFAULT_LLM_MODEL, get_llm_api_base, get_llm_api_key
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -19,11 +20,11 @@ class PPTAnalyst:
     def __init__(self, api_key: str, api_base: str = None):
         self.client = OpenAI(
             api_key=api_key,
-            base_url=api_base or "https://generativelanguage.googleapis.com/v1beta/openai",
+            base_url=get_llm_api_base(api_base),
             timeout=120.0,
             max_retries=3
         )
-        self.model = "gemini-2.5-flash"  # 优化：PPT 对比分析降级到 flash（辅助分析任务）
+        self.model = DEFAULT_LLM_MODEL
 
     def analyze_slides(self, notebooklm_images, our_images):
         """对比分析两组幻灯片"""
@@ -110,15 +111,14 @@ if __name__ == "__main__":
         print("错误: 找不到足够的图片文件进行对比")
         import sys; sys.exit(1)
         
-    api_key = os.getenv("OPENAI_API_KEY")
-    analyst = PPTAnalyst(api_key)
+    api_key = get_llm_api_key()
+    analyst = PPTAnalyst(api_key, get_llm_api_base())
     report = analyst.analyze_slides(notebooklm_imgs, our_imgs)
     
     print("\n" + "="*50)
     print("PPT 视觉差异分析报告")
     print("="*50 + "\n")
     print(report)
-
 
 
 

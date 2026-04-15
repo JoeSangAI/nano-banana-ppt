@@ -11,11 +11,11 @@ All notable changes to this project will be documented in this file.
 ### 📖 文档与工作流 (Documentation & Workflow)
 
 *   **双阶段确认流程 (Two-Phase Review)**：Skill 明确拆分为 `plan-content`（内容大纲）与 `plan-visual`（视觉方向 + 配图描述），每阶段均需用户确认后再进入下一阶段，禁止连续自动执行。
-*   **打样与全量生成 (Prototype vs Execute)**：在 `master_plan.md` 确认后，Agent 必须主动提供「先出原型打样」或「直接生成完整 PPT」的选项；`prototype` 可从四大版式家族各抽一张打样。
-*   **plan.json 复用与 `--regenerate`**：若用户修改过 `master_plan.md` 中的配图/画面描述，执行 `execute` 或 `prototype` 时需加 `--regenerate`，否则沿用已有 `plan.json`（零 token 消耗）。
+*   **打样与全量生成 (Prototype vs Execute)**：在 `visual_plan.md` 确认后，Agent 必须主动提供「先出原型打样」或「直接生成完整 PPT」的选项；`prototype` 可从四大版式家族各抽一张打样。
+*   **visual_plan.json 复用与 `--regenerate`**：若用户修改过 `visual_plan.md` 中的配图/画面描述，执行 `execute` 或 `prototype` 时需加 `--regenerate`，否则沿用已有 `visual_plan.json`。
 *   **NotebookLM 协同提醒**：生成 `content_plan.md` 后，Agent 应主动询问用户是否同时查看 NotebookLM 原生叙事，并提醒配置与耗时。
-*   **visual_prompt 零 LLM 消耗**：从 master_plan.md 模板拼接生成 visual_prompt，无额外 LLM 调用；中文 visual_suggestion 直接嵌入英文 prompt，Gemini 多语言理解。
-*   **风格库仅口头展示**：内置风格库仅在「视觉总监咨询」步骤口头列举，不写入 `master_plan.md`，避免干扰审阅文件。
+*   **审阅稿与执行稿分层**：`visual_plan.md` 只展示逐页视觉描述供用户审阅，执行阶段默认消费 `visual_plan.json` 中缓存/派生的 `final_visual_prompt`。
+*   **风格库仅口头展示**：内置风格库仅在「视觉总监咨询」步骤口头列举，不写入 `visual_plan.md`，避免干扰审阅文件。
 
 ## [v3.1.3] - 2026-03-12
 

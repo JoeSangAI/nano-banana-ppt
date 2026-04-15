@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 from PIL import Image
 
 from ..utils.llm_client import MODEL_FALLBACK_CHAIN, chat_completion_with_fallback
+from ..utils.provider_config import DEFAULT_LLM_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +21,8 @@ class ImageSelector:
     """
     def __init__(self, client):
         self.client = client
-        self.model = "gemini-2.5-flash"  # 优化：图像分析降级到 flash（质量控制任务）
-        self.selection_model = "gemini-2.5-flash"  # 优化：图像选择降级到 flash
+        self.model = DEFAULT_LLM_MODEL
+        self.selection_model = DEFAULT_LLM_MODEL
         self._cache_dir = Path("output") / "ppt" / "_image_selector_cache"
         self._cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -150,13 +151,35 @@ Ensure the output is ONLY a valid JSON object. No markdown blocks like ```json."
 
     def batch_analyze_images(self, image_paths: List[str]) -> List[Dict]:
         """
-        批量分析所有候选图片
+        批量分析所有候选图片（并行版本）
         """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        if not image_paths:
+            return []
+
+        logger.info(f"🖼️ 并行分析 {len(image_paths)} 张图片...")
+
         results = []
-        for path in image_paths:
-            res = self.analyze_image(path)
-            if res and not res.get("is_junk", False):
-                results.append(res)
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            future_to_path = {
+                executor.submit(self.analyze_image, path): path
+                for path in image_paths
+            }
+
+            for future in as_completed(future_to_path):
+                path = future_to_path[future]
+                try:
+                    res = future.result()
+                    if res and not res.get("is_junk", False):
+                        results.append(res)
+                except Exception as e:
+                    logger.warning(f"图片分析失败 {path}: {e}")
+
+        logger.info(f"✅ 图片分析完成，保留 {len(results)} 张有效图片")
         return results
 
     def select_images_for_page(

@@ -28,8 +28,10 @@ def compile_content_plan(md_path: str, json_path: str = None) -> Dict[str, Any]:
     # 读取 Markdown 内容
     content = md_path.read_text(encoding='utf-8')
 
-    # 解析结构
-    slides = _parse_markdown_structure(content)
+    # 优先解析当前 content_plan.md 的真实审阅格式；失败时回退到旧格式解析器
+    slides = _parse_review_markdown_structure(content, md_path)
+    if not slides:
+        slides = _parse_markdown_structure(content)
 
     # 构建 JSON 结构
     result = {
@@ -48,6 +50,36 @@ def compile_content_plan(md_path: str, json_path: str = None) -> Dict[str, Any]:
     json_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
 
     return result
+
+
+def _parse_review_markdown_structure(content: str, md_path: Path) -> List[Dict[str, Any]]:
+    """解析当前主流程生成的 content_plan.md。"""
+    try:
+        from .review_plan import parse_review_md
+    except Exception:
+        return []
+
+    parsed = parse_review_md(content)
+    pages = parsed.get("pages", [])
+    slides = []
+
+    for page in pages:
+        tc = page.get("text_content", {})
+        body = tc.get("body") or []
+        slide = {
+            "slide_number": page.get("page_num", len(slides) + 1),
+            "type": page.get("type", "content"),
+            "title": tc.get("headline", "") or page.get("title", ""),
+            "content": "\n".join(str(item) for item in body if item).strip(),
+            "image_anchors": page.get("image_anchors", []),
+            "text_content": tc,
+            "speaker_notes": page.get("speaker_notes", ""),
+        }
+        if tc.get("table_data"):
+            slide["table_data"] = tc.get("table_data")
+        slides.append(slide)
+
+    return slides
 
 
 def _parse_markdown_structure(content: str) -> List[Dict[str, Any]]:

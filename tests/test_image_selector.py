@@ -1,16 +1,17 @@
 import os
 from openai import OpenAI
 from tools.nano_banana_ppt.core.image_selector import ImageSelector
+from tools.nano_banana_ppt.utils.provider_config import get_llm_api_base, get_llm_api_key
 
 def test_selector():
-    api_key = os.getenv("GOOGLE_API_KEY")
+    api_key = get_llm_api_key()
     if not api_key:
-        print("Skipping test: No GOOGLE_API_KEY")
+        print("Skipping test: No OPENAI_API_KEY")
         return
 
     client = OpenAI(
         api_key=api_key,
-        base_url="https://generativelanguage.googleapis.com/v1beta/openai"
+        base_url=get_llm_api_base()
     )
     
     selector = ImageSelector(client)

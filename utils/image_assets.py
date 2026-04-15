@@ -10,6 +10,8 @@ from typing import Optional, List, Dict, Any
 from pathlib import Path
 import json
 
+from .provider_config import DEFAULT_LLM_MODEL
+
 
 class ImageMode(Enum):
     """图片处理模式枚举"""
@@ -140,7 +142,7 @@ class ImageAssetsManager:
 
             # 调用 VLM
             response = self.client.chat.completions.create(
-                model="gemini-2.5-flash",
+                model=DEFAULT_LLM_MODEL,
                 messages=[
                     {
                         "role": "user",

@@ -11,6 +11,10 @@ __pycache__/
 # macOS
 .DS_Store
 
+# Local agent / test state
+.claude-memory/
+.pytest_cache/
+
 # Output directories
 output/
 

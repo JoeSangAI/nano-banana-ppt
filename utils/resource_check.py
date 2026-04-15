@@ -169,7 +169,7 @@ def check_resources(
                         continue
 
                     # 检查图片路径是否存在
-                    if check_images and img_path:
+                    if check_images and img_path and img_path != "__GENERATED__":
                         # 尝试相对路径和绝对路径
                         img_full_path = Path(img_path)
                         if not img_full_path.is_absolute():
@@ -193,11 +193,11 @@ def check_resources(
                                 location=f"page_{page_num}_image_{img_idx}"
                             ))
 
-                        if not img.get('visual_prompt'):
+                        if not img.get('final_visual_prompt') and not img.get('visual_prompt'):
                             issues.append(CheckIssue(
                                 severity="warning",
                                 category="missing_field",
-                                message=f"页面 {page_num} 「{page_title}」的图片缺少 visual_prompt",
+                                message=f"页面 {page_num} 「{page_title}」的图片缺少 final_visual_prompt",
                                 location=f"page_{page_num}_image_{img_idx}"
                             ))
 
@@ -234,6 +234,8 @@ def check_resources(
             for i, (content_slide, visual_page) in enumerate(zip(content_slides, visual_pages)):
                 content_title = content_slide.get('title', '')
                 visual_title = visual_page.get('title', '')
+                if '·' in visual_title:
+                    visual_title = visual_title.split('·', 1)[1].strip()
 
                 if content_title != visual_title:
                     issues.append(CheckIssue(

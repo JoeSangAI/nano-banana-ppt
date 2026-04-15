@@ -12,6 +12,7 @@ from typing import Dict, List, Optional
 from openai import OpenAI
 
 from ..utils.llm_client import chat_completion_with_fallback, MODEL_FALLBACK_CHAIN
+from ..utils.provider_config import DEFAULT_LLM_MODEL, get_llm_api_base
 
 import base64
 import io
@@ -30,11 +31,11 @@ class TemplateAgent:
     def __init__(self, api_key: str, api_base: str = None, output_dir: str = "template_assets"):
         self.client = OpenAI(
             api_key=api_key,
-            base_url=api_base or "https://generativelanguage.googleapis.com/v1beta/openai",
+            base_url=get_llm_api_base(api_base),
             timeout=120.0,
             max_retries=3
         )
-        self.model = "gemini-3.1-pro-preview"
+        self.model = DEFAULT_LLM_MODEL
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
 

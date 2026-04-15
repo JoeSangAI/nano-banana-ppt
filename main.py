@@ -107,6 +107,28 @@ logger = logging.getLogger(__name__)
 DEFAULT_OUTPUT_BASE = Path.home() / "Desktop" / "AI output" / "ppt"
 
 
+def _create_pm_agent(project_dir: str = None) -> PMAgent:
+    """
+    工厂方法：创建 PM Agent。
+
+    Args:
+        project_dir: 项目目录（可选，不指定则使用默认目录）
+
+    Returns:
+        PMAgent 实例
+    """
+    from openai import OpenAI
+
+    api_key = get_llm_api_key()
+    api_base = get_llm_api_base()
+    client = OpenAI(api_key=api_key, base_url=api_base)
+
+    if project_dir:
+        return PMAgent(client, project_dir=project_dir)
+    else:
+        return PMAgent(client, project_dir=str(DEFAULT_OUTPUT_BASE))
+
+
 def _sync_content_plan_json(project_dir: Path) -> Optional[Path]:
     """根据 content_plan.md 刷新 content_plan.json。"""
     content_md_path = project_dir / "content_plan.md"
@@ -225,480 +247,6 @@ def _resolve_project_dir(content_file: str, output_name: str = None) -> tuple[st
     project_dir = DEFAULT_OUTPUT_BASE / dir_name
     project_dir.mkdir(parents=True, exist_ok=True)
     return name, project_dir
-
-
-# ──────────────────────────────────────────────
-#  Phase 1: Plan
-# ──────────────────────────────────────────────
-
-def generate_content_plan(content_file: str, template_file: str = None,
-                          logo_file: str = None, output_name: str = None, page_count: int = None,
-                          briefing: str = None, reuse_existing: bool = False):
-    """
-    Phase 1.1: 内容规划阶段。
-    生成 content_plan.md，仅供审阅大纲内容，不涉及视觉风格。
-    确认后再运行 plan-visual 生成视觉计划。
-    """
-    reset_session()
-    project_name, project_dir = _resolve_project_dir(content_file, output_name)
-    tpl_assets_dir = project_dir / "template_assets"
-    tpl_assets_dir.mkdir(exist_ok=True)
-    content_md_path = project_dir / "content_plan.md"
-
-    print(f"\n🚀 Nano Banana 2 — Phase 1.1: Content Plan")
-    print(f"📂 项目名称: {project_name}")
-    print(f"📂 项目目录: {project_dir}")
-    print(f"📄 内容源: {content_file}")
-    print(f"🎨 模版源: {template_file or '无 (AI 自动设计)'}")
-    print(f"🏷️ Logo 源: {logo_file or '未指定'}")
-    if briefing:
-        print(f"📝 用户意图 (Briefing): {briefing[:60]}{'...' if len(briefing) > 60 else ''}")
-
-    api_key = get_llm_api_key()
-    api_base = get_llm_api_base()
-    if not api_key:
-        print("❌ 错误: 请设置 OPENAI_API_KEY 环境变量")
-        return None
-
-    # 初始化 PM Agent
-    from openai import OpenAI
-    client = OpenAI(api_key=api_key, base_url=api_base)
-    pm_agent = PMAgent(client, project_dir=str(project_dir))
-
-    # PM Intake: 接收用户输入
-    print("\n📥 PM Agent 正在处理输入...")
-    user_input = {
-        "text": briefing or f"根据内容文件生成 PPT: {content_file}",
-        "images": [],
-        "urls": [],
-        "template_pptx": template_file if template_file and template_file.endswith('.pptx') else None,
-    }
-    pm_result = pm_agent.intake(user_input)
-    if pm_result["status"] != "success":
-        print(f"❌ PM Agent 处理失败: {pm_result['message']}")
-        return None
-    print(f"✅ PM Agent 处理完成，建议进入 {pm_result['next_gate']} 阶段")
-
-    narrative_agent = NarrativeAgent(api_key, api_base, project_dir=str(project_dir))
-    template_agent = TemplateAgent(api_key, api_base, output_dir=str(tpl_assets_dir))
-
-    if not os.path.exists(content_file):
-        print(f"❌ 错误: 内容文件不存在 {content_file}")
-        return None
-
-    # 支持 PDF：用 PyMuPDF 提取文本；否则按 UTF-8 文本读取
-    if content_file.lower().endswith('.pdf'):
-        try:
-            import fitz  # PyMuPDF
-            doc = fitz.open(content_file)
-            parts = []
-            for page in doc:
-                parts.append(page.get_text())
-            num_pages = len(doc)
-            doc.close()
-            content_context = "\n\n".join(parts)
-            if not content_context.strip():
-                print("❌ 错误: PDF 中未提取到文本，请检查文件或改用已导出的 .md/.txt")
-                return None
-            logger.info(f"已从 PDF 提取 {num_pages} 页文本")
-        except Exception as e:
-            logger.error(f"PDF 文本提取失败: {e}")
-            print(f"❌ 错误: PDF 读取失败 ({e})，请确认已安装 pymupdf: pip install pymupdf")
-            return None
-    else:
-        with open(content_file, 'r', encoding='utf-8') as f:
-            content_context = f.read()
-
-    # Step 1 & 2: 并行执行内容分析和模版解析（两者互不依赖）
-    template_info = None
-    assets = {}
-
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    def _analyze():
-        print("\n🔍 [Step 1/3] 正在分析文档内容...")
-        result = narrative_agent.analyze_content(content_context)
-        logger.info(f"自动推导参数: {json.dumps(result, ensure_ascii=False)}")
-        return result
-
-    def _parse_template():
-        if template_file and os.path.exists(template_file):
-            print(f"\n🖼️ [Step 2/3] 正在解析模版文件...")
-            try:
-                info = template_agent.process_template(template_file)
-                logger.info("模版解析成功")
-                return info
-            except Exception as e:
-                logger.error(f"模版解析失败: {e}")
-        elif template_file:
-            logger.warning(f"模版文件不存在: {template_file}，将使用 AI 自动设计")
-        return None
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        fut_analyze = pool.submit(_analyze)
-        fut_template = pool.submit(_parse_template)
-        inferred = fut_analyze.result()
-        template_info = fut_template.result()
-
-    if template_info:
-        assets['template_file'] = template_file
-        assets['logo_path'] = template_info.get('logo_path')
-        assets['template_images'] = template_info.get('reference_images')
-
-    if logo_file and os.path.exists(logo_file):
-        assets['logo_path'] = logo_file
-        print(f"🏷️ 使用用户指定 Logo: {logo_file} (优先于模版截取)")
-    elif logo_file:
-        logger.warning(f"Logo 文件不存在: {logo_file}，将回退到模版截取")
-
-    # If we have a logo but no template, extract brand colors
-    brand_colors = []
-    if assets.get('logo_path') and not template_info:
-        from tools.nano_banana_ppt.utils.image_utils import extract_dominant_colors
-        print("\n🎨 正在从 Logo 提取品牌色...")
-        brand_colors = extract_dominant_colors(assets['logo_path'], num_colors=3)
-        if brand_colors:
-            print(f"   提取到的品牌色: {', '.join(brand_colors)}")
-            inferred['brand_colors'] = brand_colors
-
-    # 构建约束
-    constraints = {
-        "target_audience": inferred.get("target_audience", "通用受众"),
-        "presentation_type": inferred.get("presentation_type", "商业演示"),
-        "duration": inferred.get("duration", "15分钟"),
-        "style_preference": inferred.get("style_preference", "专业严谨"),
-        "page_count": str(page_count) if page_count else "10",
-        "briefing": briefing,
-    }
-
-    # Step 3: 生成叙事大纲
-    print("\n📝 [Step 3/3] 正在构建叙事架构...")
-
-    # 预检测：如果检测到完整大纲且未指定 --reuse-existing，提示用户
-    if not reuse_existing:
-        complete_plan_info = NarrativeAgent.detect_complete_content_plan(content_context)
-        if complete_plan_info["is_complete"] and complete_plan_info["confidence"] >= 0.8:
-            print(f"""
-✅ 检测到完整大纲（{complete_plan_info['page_count']}页）
-   - 包含标题/正文/备注: {'是' if complete_plan_info['has_speaker_notes'] else '否'}
-   - 包含数据表格: {'是' if complete_plan_info['has_tables'] else '否'}
-   - 置信度: {complete_plan_info['confidence']:.1%}
-
-💡 建议使用 --reuse-existing 参数直接复用，避免内容被修改：
-   python3 -m tools.nano_banana_ppt.main plan-content "{content_file}" --reuse-existing
-
-⏳ 继续执行将使用"解析模式"（可能会修改内容）...
-            """)
-            import time
-            time.sleep(2)  # 给用户2秒时间看到提示
-
-    narrative_outline = narrative_agent.generate_narrative_outline(content_context, constraints, content_file_path=content_file, reuse_existing=reuse_existing)
-    print(f"✅ 叙事大纲生成完成，共 {len(narrative_outline)} 页")
-
-    meta = {
-        "project_name": project_name,
-        "project_dir": str(project_dir),
-        "content_file": content_file,
-        "template_file": assets.get('template_file'),
-        "logo_file": assets.get('logo_path'),
-    }
-
-    # 保存 _content_state.json
-    state = {
-        "inferred": inferred,
-        "assets": assets,
-        "meta": meta,
-        "template_info": template_info,
-        "narrative_outline": narrative_outline,
-        "constraints": constraints
-    }
-    state_file = project_dir / "_content_state.json"
-    with open(state_file, "w", encoding='utf-8') as f:
-        json.dump(state, f, ensure_ascii=False, indent=2)
-
-    # 保存 content_plan.md
-    content_md_content = build_content_review_md(narrative_outline, meta)
-    with open(content_md_path, "w", encoding='utf-8') as f:
-        f.write(content_md_content)
-    _sync_content_plan_json(project_dir)
-
-    print(f"\n{'='*60}")
-    print(f"📋 内容草稿出来了，您看看文字和插图对不对？")
-    print(f"   已保存到: {content_md_path}")
-    print(f"{'='*60}")
-    for p in narrative_outline:
-        p_num = p['page_num']
-        p_type = p.get('type', 'content')
-        tc = p.get('text_content', {})
-        title = tc.get('headline') or p.get('title', '')
-        print(f"  P{p_num} [{p_type.upper():8s}] {title}")
-    print(f"{'='*60}")
-    print(f"\n⛔ STOP — 请审阅 content_plan.md 确认无误后再继续！")
-    print(f"   下一步: python main.py plan-visual \"{project_dir}\" [--style xxx]")
-
-    return str(content_md_path)
-
-
-def generate_visual_plan(plan_dir: str, style_preference: str = None):
-    """
-    Phase 1.5: 视觉规划阶段。
-    读取内容计划，生成设计系统和视觉主张，输出 visual_plan.md。
-    """
-    project_dir = Path(plan_dir)
-    state_file = project_dir / "_content_state.json"
-    review_md_path = project_dir / REVIEW_MD_FILENAME
-
-    # 初始化 PM Agent（用于判断 Gate）
-    api_key = get_llm_api_key()
-    api_base = get_llm_api_base()
-    if api_key:
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key, base_url=api_base)
-        pm_agent = PMAgent(client, project_dir=str(project_dir))
-        current_gate = pm_agent.determine_gate()
-        print(f"📍 当前 Gate: {current_gate}")
-        if current_gate != "Visual" and current_gate != "Content":
-            print(f"⚠️  警告: 当前应该在 {current_gate} 阶段，但您正在执行 Visual 阶段")
-    else:
-        pm_agent = None
-
-    # 如果 _content_state.json 不存在，尝试从 content_plan.md 重建
-    if not state_file.exists():
-        content_md_path = project_dir / "content_plan.md"
-        if content_md_path.exists():
-            print(f"📄 检测到 content_plan.md 但无状态文件，自动重建 _content_state.json...")
-            with open(content_md_path, 'r', encoding='utf-8') as f:
-                md_text = f.read()
-            parsed = parse_review_md(md_text)
-            if parsed and parsed.get("pages"):
-                # 从 content_plan.md 提取主题名作为项目名
-                project_name = project_dir.name
-                # 去掉日期前缀
-                project_name = re.sub(r'^\d{8}_', '', project_name)
-                project_name = re.sub(r'^\d{8}_\d{8}_', '', project_name)
-                # 构建最小化状态
-                state = {
-                    "inferred": {"project_name": project_name},
-                    "assets": {},
-                    "meta": {"source_file": str(content_md_path)},
-                    "template_info": None,
-                    "narrative_outline": parsed.get("pages", []),
-                    "constraints": {}
-                }
-                with open(state_file, 'w', encoding='utf-8') as f:
-                    json.dump(state, f, ensure_ascii=False, indent=2)
-                print(f"✅ 状态文件已创建，继续执行...")
-            else:
-                print(f"❌ 错误: 找不到内容状态文件，也无法从 content_plan.md 解析。")
-                return None
-        else:
-            print(f"❌ 错误: 找不到内容状态文件 {state_file}。请先运行 plan-content。")
-            return None
-
-    with open(state_file, 'r', encoding='utf-8') as f:
-        state = json.load(f)
-
-    inferred = state.get("inferred", {})
-    assets = state.get("assets", {})
-    meta = state.get("meta", {})
-    template_info = state.get("template_info")
-    narrative_outline = state.get("narrative_outline", [])
-    constraints = state.get("constraints", {})
-
-    # 保存原始的 state_narrative_outline（包含 native_images），用于后续合并
-    state_narrative_outline = narrative_outline.copy() if narrative_outline else []
-
-    # 尝试从用户可能编辑过的 content_plan.md 读取最新大纲（覆盖 state 中的旧数据）
-    content_md_path = project_dir / "content_plan.md"
-    if content_md_path.exists():
-        with open(content_md_path, 'r', encoding='utf-8') as f:
-            md_text = f.read()
-
-        # Gate 转换前：规范化 content_plan.md
-        print("\n📋 正在规范化 content_plan.md...")
-        normalized_content, issues = normalize_content_plan(md_text)
-
-        # 检查是否有无法自动修复的问题
-        blocking_issues = [issue for issue in issues if "错误" in issue or "缺失" in issue]
-        if blocking_issues:
-            print("❌ 发现无法自动修复的问题:")
-            for issue in blocking_issues:
-                print(f"   - {issue}")
-            print("\n请修复这些问题后再继续")
-            return None
-
-        # 如果有修复，保存规范化后的内容
-        if normalized_content != md_text:
-            with open(content_md_path, 'w', encoding='utf-8') as f:
-                f.write(normalized_content)
-            print("✅ content_plan.md 已规范化")
-            if issues:
-                print(f"   修复了 {len(issues)} 个格式问题")
-        else:
-            print("✅ content_plan.md 格式正确")
-
-        parsed = parse_review_md(normalized_content)
-        if parsed and parsed.get("pages"):
-            narrative_outline = parsed.get("pages")
-            print(f"📄 已读取最新编辑的 content_plan.md 大纲")
-
-    print(f"\n🚀 Nano Banana 2 — Phase 1.5: Visual Plan")
-    print(f"📂 项目目录: {project_dir}")
-    print(f"🎨 风格偏好: {style_preference or 'AI 自动推导'}")
-
-    api_key = get_llm_api_key()
-    api_base = get_llm_api_base()
-    if not api_key:
-        print("❌ 错误: 请设置 OPENAI_API_KEY 环境变量")
-        return None
-
-    # 支持 prompt_mode 参数 (verbose 或 minimal)
-    prompt_mode = os.getenv("PROMPT_MODE", "verbose")
-    visual_agent = VisualAgent(api_key, api_base, prompt_mode=prompt_mode)
-
-    # Step 1: 生成风格定义
-    print("\n🎨 [Step 1/3] 正在定义视觉风格 (AI Minting)...")
-    constraints["style_preference"] = style_preference or inferred.get("style_preference", "专业商务")
-    brand_colors = inferred.get("brand_colors", [])
-    if brand_colors:
-        constraints["brand_colors"] = brand_colors
-
-    style_definition = visual_agent.define_style(constraints, assets, template_info)
-    if isinstance(style_definition, tuple):
-        style_desc_str, style_config = style_definition
-    else:
-        style_desc_str = str(style_definition)
-        style_config = {"description": style_desc_str, "palette": [], "mode": "ai_minting"}
-
-    # Step 2: 为每页生成具体的「配图/画面」描述（Visual Director 提案）
-    print("\n📋 [Step 2/5] 正在生成每页视觉提案 (Visual Director)...\n⏳ 这可能需要 1-2 分钟...")
-    from tools.nano_banana_ppt.utils.review_plan import generate_per_slide_visual_suggestions
-    per_slide_descriptions = generate_per_slide_visual_suggestions(
-        narrative_outline, style_config, api_key, api_base
-    )
-    if per_slide_descriptions:
-        print(f"✅ 已生成 {len(per_slide_descriptions)} 页的视觉描述")
-        for pnum, suggestion in sorted(per_slide_descriptions.items()):
-            print(f"   P{pnum}: {suggestion[:60]}...")
-    else:
-        print("⚠️ 未生成视觉描述，将留空供用户补充")
-
-    for page in narrative_outline:
-        page_num = page.get("page_num")
-        if page_num in per_slide_descriptions:
-            page["visual_description"] = per_slide_descriptions[page_num]
-            page["visual_suggestion"] = per_slide_descriptions[page_num]
-
-    # Step 3: 生成视觉主张 (Art Director Manifesto) — 仅供用户审阅
-    print("\n📋 [Step 3/5] 正在生成视觉主张 (Art Director Manifesto)...")
-    from tools.nano_banana_ppt.utils.review_plan import generate_design_manifesto
-
-    is_template_mode = bool(meta.get("template_file"))
-    parsed_stub = {"pages": narrative_outline, "style": style_config}
-    manifesto_dict = generate_design_manifesto(
-        parsed=parsed_stub,
-        template_mode=is_template_mode,
-        client=visual_agent.client
-    )
-    manifesto_text = manifesto_dict.get("chinese_proposal", "")
-
-    # 写回 manifesto_bans 和 visual_diversity_strategy 到 _content_state.json
-    state_file = project_dir / "_content_state.json"
-    if state_file.exists():
-        with open(state_file, 'r', encoding='utf-8') as f:
-            state = json.load(f)
-    else:
-        state = {}
-
-    state["manifesto_bans"] = manifesto_dict.get("english_cliche_bans", "")
-    state["visual_diversity_strategy"] = manifesto_dict.get("visual_diversity_strategy", "")
-    with open(state_file, 'w', encoding='utf-8') as f:
-        json.dump(state, f, ensure_ascii=False, indent=2)
-
-    # Step 4: 生成最终执行提示词（将成为 visual_plan.md / visual_plan.json 的单一事实来源）
-    print("\n🧠 [Step 4/5] 正在生成最终执行提示词 (Final Visual Prompts)...\n⏳ 这可能需要 1-2 分钟...")
-    style_config_with_manifesto = dict(style_config)
-    style_config_with_manifesto["manifesto"] = manifesto_text
-    generated_slides = visual_agent.generate_visual_plan(
-        narrative_outline=narrative_outline,
-        style_definition_tuple=(style_config_with_manifesto.get("description", style_desc_str), style_config_with_manifesto),
-        assets={"logo_path": meta.get("logo_file")},
-        template_info=template_info,
-    )
-
-    # Step 5: 生成人类可审阅的 visual_plan.md 与 visual_plan.json
-    print("\n📋 [Step 5/5] 正在生成完整审阅计划...")
-    content_md_path_str = str(content_md_path) if content_md_path.exists() else None
-    meta["content_file"] = meta.get("content_file") or str(content_md_path)
-    if content_md_path_str:
-        review_md_content = build_visual_plan_from_content_plan(
-            content_md_path_str, style_config, meta,
-            manifesto=manifesto_text,
-            per_slide_descriptions=per_slide_descriptions,
-            state_narrative_outline=state_narrative_outline,  # 传入原始 outline（包含 native_images）
-            generated_slides=generated_slides,
-        )
-    else:
-        raise FileNotFoundError(f"content_plan.md 不存在: {content_md_path}。请先运行 plan-content。")
-    with open(review_md_path, "w", encoding='utf-8') as f:
-        f.write(review_md_content)
-
-    parsed_review = parse_review_md(review_md_content, project_dir=str(project_dir))
-    visual_plan_data = derive_technical_plan(
-        parsed_review,
-        str(project_dir),
-        meta.get("content_file", str(content_md_path)),
-        api_key,
-        api_base,
-    )
-    visual_plan_json_path = project_dir / "visual_plan.json"
-    with open(visual_plan_json_path, "w", encoding="utf-8") as f:
-        json.dump(visual_plan_data, f, ensure_ascii=False, indent=2)
-
-    print(f"\n{'='*60}")
-    print(f"📋 视觉计划已就绪，已保存: {review_md_path}")
-    print(f"📦 执行计划已同步: {visual_plan_json_path}")
-    print(f"   请重点审阅每页的【配图/画面】与【最终执行提示词】。")
-    print(f"{'='*60}")
-
-    print(f"\n{'='*60}")
-    print(f"⛔ STOP — 请审阅 {REVIEW_MD_FILENAME} 后再继续！")
-    print(f"   必须先让用户审阅：")
-    print(f"   ① 视觉主张和配色方案（Design Manifesto）")
-    print(f"   ② 每页的配图/画面描述和最终执行提示词是否符合预期")
-    print(f"{'='*60}")
-
-    # 实际阻塞等待确认（非交互环境返回 "BLOCKED"）
-    result = _prompt_user("确认审阅完毕，要继续执行吗？")
-    if result == "BLOCKED":
-        print(f"""
-═══════════════════════════════════════════════════════
-⛔ GATE 2 — 已拦截，需人工确认
-═══════════════════════════════════════════════════════
-   visual_plan.md 已生成（第 1 页有完整审阅说明）。
-
-   请将以下内容呈现给用户：
-   ① 确认已审阅 visual_plan.md
-   ② 确认后可回答"继续"我来执行，或回答"preview 1-2"
-     我会用 prototype 先跑 1-2 页给您确认风格。
-═══════════════════════════════════════════════════════
-""")
-        return "BLOCKED"
-    elif not result:
-        print(f"\n⏸️  已停止。请审阅 {REVIEW_MD_FILENAME} 后再运行 execute。")
-        return None
-
-    return str(review_md_path)
-
-
-def generate_plan(content_file: str, template_file: str = None,
-                  logo_file: str = None, output_name: str = None, page_count: int = None,
-                  style_preference: str = None, briefing: str = None):
-    """
-    Legacy 入口：与 plan-content 行为一致，仅生成 content_plan.md 并停止。
-    请审阅 content_plan.md 确认后，再运行 plan-visual。
-    """
-    return generate_content_plan(content_file, template_file, logo_file, output_name, page_count, briefing, reuse_existing=False)
 
 
 # ──────────────────────────────────────────────
@@ -1319,20 +867,52 @@ if __name__ == "__main__":
         template = rest[2] if len(rest) > 2 else None
         logo = rest[3] if len(rest) > 3 else None
         out_name = rest[4] if len(rest) > 4 else None
-        if command == "plan":
-            generate_plan(content, template, logo, out_name, page_count=pages, briefing=briefing)
+
+        # 使用新的 PM Agent 驱动架构
+        pm_agent = _create_pm_agent()
+        result = pm_agent.execute_phase(
+            "content",
+            content_file=content,
+            template_file=template,
+            logo_file=logo,
+            page_count=pages,
+            briefing=briefing,
+            output_name=out_name,
+        )
+
+        if result["status"] == "success":
+            print(f"\n{'='*60}")
+            print(f"📋 内容草稿出来了，您看看文字和插图对不对？")
+            print(f"   已保存到: {result.get('content_plan_path')}")
+            print(f"{'='*60}")
+            print(f"\n⛔ STOP — 请审阅 content_plan.md 确认无误后再继续！")
+            print(f"   下一步: python main.py plan-visual \"{pm_agent.project_dir}\" [--style xxx]")
         else:
-            generate_content_plan(content, template, logo, out_name, page_count=pages, briefing=briefing, reuse_existing=reuse_existing)
+            print(f"\n❌ 内容阶段失败: {result.get('message')}")
+            sys.exit(1)
 
     elif command == "plan-visual":
         if len(rest) < 2:
             print("❌ 缺少 项目目录 参数")
             sys.exit(1)
         proj_dir = rest[1]
-        result = generate_visual_plan(proj_dir, style_preference=style)
-        if result == "BLOCKED":
-            # 已拦截，Agent 应停止并向用户呈现 plan 等待确认
-            sys.exit(0)  # 干净退出，不抛异常
+
+        # 使用新的 PM Agent 驱动架构
+        pm_agent = _create_pm_agent(project_dir=proj_dir)
+        result = pm_agent.execute_phase(
+            "visual",
+            project_dir=proj_dir,
+            style_preference=style,
+        )
+
+        if result["status"] == "success":
+            print(f"\n{'='*60}")
+            print(f"📋 视觉计划已就绪，已保存: {result.get('visual_plan_path')}")
+            print(f"{'='*60}")
+            print(f"\n⛔ STOP — 请审阅 visual_plan.md 确认无误后再继续！")
+        else:
+            print(f"\n❌ 视觉阶段失败: {result.get('message')}")
+            sys.exit(1)
 
     elif command == "execute":
         if len(rest) < 2:
@@ -1340,10 +920,25 @@ if __name__ == "__main__":
             sys.exit(1)
         pf = rest[1]
         on = rest[2] if len(rest) > 2 else None
-        result = execute_from_plan(pf, on, resolution=resolution, slide_filter=slides, reassemble_only=reassemble, regenerate=regenerate, no_blend=no_blend, force=force)
-        if result:
-            _, proj_dir = result if isinstance(result, tuple) else (None, None)
-            _interactive_rerun_prompt(pf, on or Path(pf).parent.name, resolution or "1K", project_dir=proj_dir)
+
+        # 使用新的 PM Agent 驱动架构
+        pm_agent = _create_pm_agent()
+        result = pm_agent.execute_phase(
+            "execute",
+            plan_file=pf,
+            output_name=on,
+            resolution=resolution,
+            slide_filter=slides,
+            reassemble_only=reassemble,
+            force=force,
+        )
+
+        if result["status"] == "success":
+            print(f"\n✨ {result.get('message')}")
+            print(f"   输出路径: {result.get('output_path')}")
+        else:
+            print(f"\n❌ 执行阶段失败: {result.get('message')}")
+            sys.exit(1)
 
     elif command == "upscale":
         if len(rest) < 2:

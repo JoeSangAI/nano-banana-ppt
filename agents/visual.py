@@ -818,8 +818,8 @@ Output format: ["#HEX1", "#HEX2", "#HEX3"]"""
 
         # 构建内容大纲摘要
         outline_summary = "\n".join([
-            f"P{p['page_num']} ({p.get('type','content')}): {p.get('text_content', {}).get('headline', '')} | Section: {p.get('section_title', 'N/A')}"
-            for p in narrative_outline
+            f"P{p.get('page_num', p.get('slide_number', i+1))} ({p.get('type','content')}): {p.get('text_content', {}).get('headline', '') if p.get('text_content') else p.get('title', '')} | Section: {p.get('section_title', 'N/A')}"
+            for i, p in enumerate(narrative_outline)
         ])
 
         # 提取全局风格信息
@@ -924,6 +924,21 @@ Output format: ["#HEX1", "#HEX2", "#HEX3"]"""
 
         brand_color_text = f"- Brand Colors (Extracted from Logo): {', '.join(brand_colors)}\nIf Brand Colors are provided, USE THEM as the primary inspiration for the palette, ensuring high contrast for text reading." if brand_colors else ""
 
+        # 如果有设计指导文件，注入到 prompt
+        style_guide_section = ""
+        if constraints.get("style_guide_content"):
+            style_guide_content = constraints.get("style_guide_content", "")
+            style_guide_section = f"""
+【Design Guide from User】
+The user provided the following design guide. You MUST strictly follow these visual principles:
+
+---
+{style_guide_content}
+---
+
+Based on the above guide, define the visual style for this presentation.
+"""
+
         prompt = f"""You are a world-class Art Director. Define a cohesive visual style guide for a presentation.
 
 【Context】
@@ -931,6 +946,7 @@ Output format: ["#HEX1", "#HEX2", "#HEX3"]"""
 - Audience: {audience}
 - User Preference Vibe: "{user_preference}"
 {brand_color_text}
+{style_guide_section}
 
 【Task】
 If User Preference is vague, default to a **"Modern Professional Business"** style (Clean, Minimalist, San Francisco/Inter font, High legibility, subtle gradients, "Apple Keynote" quality).
@@ -1185,9 +1201,12 @@ Ensure the palette has high contrast for text reading.
         else:
             return 'center'
 
-    def generate_visual_plan(self, narrative_outline: List[Dict], style_definition_tuple: tuple, assets: Dict, template_info: Dict = None) -> List[Dict]:
+    def generate_visual_plan(self, narrative_outline: List[Dict], style_definition_tuple: tuple, assets: Dict, template_info: Dict = None, meta: Dict = None) -> List[Dict]:
         """生成完整的视觉执行计划 (Visual Plan)"""
         logger.info("🎨 Visual Agent: 正在生成视觉执行计划...")
+
+        # 处理默认参数
+        meta = meta or {}
 
         if isinstance(style_definition_tuple, tuple):
             style_definition, style_config = style_definition_tuple
@@ -1264,8 +1283,8 @@ Ensure the palette has high contrast for text reading.
         # 5. Global Context Injection (Summary of the whole deck)
         # Create a condensed outline string
         outline_summary = "\n".join([
-            f"- P{p['page_num']} ({p.get('type','content')}): {p.get('text_content', {}).get('headline', p.get('title', ''))} - {p.get('one_takeaway', p.get('core_message', ''))}" 
-            for p in narrative_outline[:10]
+            f"- P{p.get('page_num', p.get('slide_number', idx+1))} ({p.get('type','content')}): {p.get('text_content', {}).get('headline', p.get('title', ''))} - {p.get('one_takeaway', p.get('core_message', ''))}"
+            for idx, p in enumerate(narrative_outline[:10])
         ])
         if len(narrative_outline) > 10:
             outline_summary += "\n... (more slides)"
@@ -1351,7 +1370,7 @@ Ensure the palette has high contrast for text reading.
                 plan_item['visual_prompt'] = plan_item['final_visual_prompt']
                 plan_item['reference_image'] = reference_image_path
                 plan_item['layout'] = layout_name
-                plan_item['logo_path'] = assets.get('logo_path') or (template_info.get('logo_path') if template_info else None)
+                plan_item['logo_path'] = (assets.get('logo_path') or meta.get('logo_file') or (template_info.get('logo_path') if template_info else None))
                 plan_item['logo_location'] = template_info.get('logo_location', 'Top-Right') if template_info else 'Top-Right'
                 plan_item['style_config'] = style_config
                 plan_item['use_data_visualizer'] = True
@@ -1448,7 +1467,7 @@ Ensure the palette has high contrast for text reading.
                 plan_item['visual_prompt'] = final_prompt
                 plan_item['reference_image'] = task['reference_image_path']
                 plan_item['layout'] = task['layout_name']
-                plan_item['logo_path'] = assets.get('logo_path') or (template_info.get('logo_path') if template_info else None)
+                plan_item['logo_path'] = (assets.get('logo_path') or meta.get('logo_file') or (template_info.get('logo_path') if template_info else None))
                 plan_item['logo_location'] = template_info.get('logo_location', 'Top-Right') if template_info else 'Top-Right'
                 plan_item['style_config'] = style_config
                 plan_item['seed_family'] = task.get('seed_family', '')

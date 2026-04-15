@@ -128,7 +128,7 @@ def _parse_visual_plan_structure(content: str) -> List[Dict[str, Any]]:
                     "mode": image_block.mode,
                     "role": image_block.role,
                     "position": image_block.position,
-                    "visual_prompt": visual_prompt
+                    "final_visual_prompt": visual_prompt
                 })
 
             current_image_block_lines = []

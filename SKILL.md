@@ -120,9 +120,9 @@ python3 -m nano_banana_ppt.main plan <content_file> [template_file] [logo_file] 
 - **Copywriter Director** analyzes content, parses template, and generates narrative outline.
 - **Art Director** generates a Design System Manifesto (defining shape, composition, color, and explicitly banning cliché AI elements).
 - Saves **visual_plan.md** (human-readable Markdown: 包含 Art Director 的 Manifesto（视觉设计系统与避坑指南），以及 Copywriter 的各页类型/标题/内容/**演讲备注**/配图描述).
-- Stores all project assets under `output/ppt/<date>_<project_name>/`.
+- Stores all project assets under `~/Desktop/AI output/ppt/<date>_<project_name>/`.
 - NarrativeAgent 会：精细拆解章节、将详实论述放入演讲备注、用 hero 页突出金句。支持多种正文形态（paragraph/bullets/data/quote/mixed）、呼吸页、副标题按需、抬机率设计。
-- Does NOT generate plan.json or visual prompts at this stage.
+- Does NOT generate `visual_plan.json` or final visual prompts at this stage.
 - **Agent MUST present the outline and manifesto (from terminal output or plan_for_review.md) to the user for confirmation before proceeding.**
 
 ### Phase 1.5: Prototype (Optional but Recommended)
@@ -138,8 +138,8 @@ python3 -m nano_banana_ppt.main prototype <project_dir_or_plan_md> [output_name]
 ```bash
 python3 -m nano_banana_ppt.main execute <project_dir_or_plan_md> [output_name] [--resolution 1K|2K|4K] [--slides 3 5 7]
 ```
-- Accepts: project directory (e.g. `output/设定集`), `visual_plan.md`, or `plan.json`.
-- If given visual_plan.md: parses MD → derives plan.json (LLM generates visual_prompts using the Design System Manifesto) → saves plan.json → generates images.
+- Accepts: project directory (e.g. `~/Desktop/AI output/ppt/设定集`), `visual_plan.md`, or `visual_plan.json`.
+- If given `visual_plan.md`: parses MD → derives `visual_plan.json` (or refreshes only the slides whose visual description changed) → generates images using the stored `final_visual_prompt`.
 - Generates images via Gemini, assembles `.pptx`.
 
 ### Agent Workflow (CRITICAL — follow this exact sequence):
@@ -155,7 +155,7 @@ python3 -m nano_banana_ppt.main execute <project_dir_or_plan_md> [output_name] [
    - If user agrees:
      - Use the `notebooklm-automation` skill (or raw `notebooklm` CLI if installed) to create a notebook, add the source file, and generate an outline (e.g., `generate report --format briefing-doc`).
      - **DO NOT offer or generate podcasts, mind maps, or native PPTs here.** Those features belong ONLY in the standalone `notebooklm-automation` skill.
-     - Present both the native `content_plan.md` and the NotebookLM alternative outline (which MUST be saved into the same PPT project directory as a separate file, e.g., `output/ppt/<date>_<project_name>/notebooklm_outline.md`).
+     - Present both the native `content_plan.md` and the NotebookLM alternative outline (which MUST be saved into the same PPT project directory as a separate file, e.g., `~/Desktop/AI output/ppt/<date>_<project_name>/notebooklm_outline.md`).
      - Have the user interact and specify how to modify/fuse the outline. **CRITICAL:** Whatever the user decides, you must write the final chosen structure back into the native `content_plan.md` format before proceeding.
    - If user declines: Proceed to next step.
 3. **Present `content_plan.md` to the user.** Show the slide-by-slide outline (page number, type, headline, body summary).
@@ -180,8 +180,8 @@ python3 -m nano_banana_ppt.main execute <project_dir_or_plan_md> [output_name] [
    - 如果用户描述了自己的意图但不在预制库中（如"赛博朋克+中国龙元素"），记录为 free-text style，plan-visual 会通过 LLM 理解并映射。
    - **模板复刻**（用户提供 PDF/PPTX）和**自定义 AI Minting**（无模板时 AI 自动定义风格）均全程可用，前者通过 `--template` 参数传入，后者为默认行为。
 6. Run `plan-visual <project_dir>` with the selected `--style` (if any).
-7. **Present `master_plan.md` to the user.** Show the Art Director's Manifesto (visual style, palette, cliché avoidance rules) and the per-slide visual descriptions. **Do NOT include the full style inspiration list in master_plan.md** — that list was only for agent reference during style consultation.
-8. **⛔ STOP — GATE 2.** Do NOT run `execute` or `prototype` yet. Wait for the user to explicitly confirm the visual plan. Remind the user they can edit `master_plan.md` directly to adjust any slide's visual description before proceeding.
+7. **Present `visual_plan.md` to the user.** Show the Art Director's Manifesto (visual style, palette, cliché avoidance rules) and the per-slide visual descriptions. Keep execution prompts in `visual_plan.json`, not in `visual_plan.md`. **Do NOT include the full style inspiration list in `visual_plan.md`** — that list was only for agent reference during style consultation.
+8. **⛔ STOP — GATE 2.** Do NOT run `execute` or `prototype` yet. Wait for the user to explicitly confirm the visual plan. Remind the user they can edit `visual_plan.md` directly to adjust any slide's visual description before proceeding.
 
 #### ── Prototype & Execute ──
 9. **Prototype Offer:** Ask the user if they want to run `prototype` to preview 1-2 slides before generating the full deck.
@@ -206,23 +206,23 @@ python3 -m nano_banana_ppt.main auto <content_file> [template_file] [logo_file] 
 - `requests`
 
 ## Configuration
-- `GOOGLE_API_KEY`: Recommended public configuration.
-- `OPENAI_API_KEY` / `OPENAI_API_BASE`: Optional compatibility path for advanced users, but do not present it as the default public setup.
+- `OPENAI_API_KEY` / `OPENAI_API_BASE`: 默认的 MiniMax LLM / VLM 配置。
+- `IMAGE_GEN_API_KEY` / `IMAGE_GEN_API_BASE`: 默认的 DeerAPI 生图配置。
 
 ## Common Mistakes & Red Flags
 
 | Mistake | Consequence | Fix |
 |---------|-------------|-----|
 | **Skipping GATE 1 (content review)** | User gets unwanted content structure | Run `plan-content`, present `content_plan.md`, STOP and wait for confirmation before running `plan-visual` |
-| **Skipping GATE 2 (visual review)** | User cannot review visual style before costly image generation | Run `plan-visual`, present `master_plan.md`, STOP and wait for confirmation before running `execute` |
+| **Skipping GATE 2 (visual review)** | User cannot review visual style before costly image generation | Run `plan-visual`, present `visual_plan.md`, STOP and wait for confirmation before running `execute` |
 | **Asking style preference before content is confirmed** | Premature style decision before user has seen the outline | Ask style only AFTER GATE 1 is confirmed |
 | **Chaining plan-content→plan-visual→execute without stops** | User bypassed on both review gates | Each gate requires explicit user confirmation — never chain all three in one turn |
 | **Using .pptx as template** | May need LibreOffice for conversion | Prefer PDF templates, or ensure `soffice` is installed |
-| **Missing API Key** | Script failure | Ensure `GOOGLE_API_KEY` is set |
+| **Missing API Key** | Script failure | Ensure `OPENAI_API_KEY` is set, and `IMAGE_GEN_API_KEY` is set for image generation |
 | **Promising native editable tables** | User expects a feature the current pipeline no longer provides | Offer charts, infographic pages, or the final blank template slides for manual table insertion |
 | **Manual XML editing** | Corrupt files | Always use the script |
 | **Not providing Logo source** | No logo in output | Pass logo file alongside template |
-| **Running `execute` without `plan`** | Missing plan file | Always run `plan` first; execute needs visual_plan.md or plan.json |
+| **Running `execute` without `plan`** | Missing plan file | Always run `plan` first; execute needs `visual_plan.md` or `visual_plan.json` |
 | **Ignoring gray slides** | API failures resulted in placeholder | Rerun with `--slides N` for failed pages (check terminal output for errors) |
 
 ## Stability Notes

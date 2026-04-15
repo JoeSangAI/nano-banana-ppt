@@ -93,11 +93,13 @@
 
 如果你不想配置复杂的开发环境，仅仅是想在 Cursor 或 Claude Code 这样的 AI 编程助手里使用它，这是最简单的玩法。
 
-### 第 1 步：配置你的大模型 API 密钥
-本工具底层使用 Google 的极速且强大的 Gemini 模型。你需要在电脑的终端或项目根目录的 `.env` 文件中配置以下环境变量（建议使用 OpenAI 兼容格式的转发 API，性价比极高）：
+### 第 1 步：配置你的 API 密钥
+本工具默认使用 MiniMax 作为统一的 LLM / VLM 接口，使用 DeerAPI 作为统一的生图接口。你需要在电脑的终端或项目根目录的 `.env` 文件中配置以下环境变量：
 ```bash
 export OPENAI_API_KEY="sk-你的API密钥"
-export OPENAI_API_BASE="https://你的API代理地址/v1"
+export OPENAI_API_BASE="https://api.minimax.io/v1"
+export IMAGE_GEN_API_KEY="sk-你的DeerAPI密钥"
+export IMAGE_GEN_API_BASE="https://api.deerapi.com/v1"
 ```
 
 ### 第 2 步：安装 Cursor Skill
@@ -134,6 +136,11 @@ nano_banana_ppt/
 
 **v4 架构采用三阶段工作流：**
 
+默认项目输出目录：
+```text
+~/Desktop/AI output/ppt/{date}_{project_name}/
+```
+
 **阶段 1.1：内容规划 (Content Gate)**
 ```bash
 python3 -m tools.nano_banana_ppt.main plan-content "content.md" [template.pptx] [logo.png] [output_name] --pages 15 --briefing "为投资者展示产品价值"
@@ -142,25 +149,25 @@ python3 -m tools.nano_banana_ppt.main plan-content "content.md" [template.pptx] 
 
 **阶段 1.5：视觉规划 (Visual Gate)**
 ```bash
-python3 -m tools.nano_banana_ppt.main plan-visual "output/ppt/your_project_dir" --style "liquid_glass"
+python3 -m tools.nano_banana_ppt.main plan-visual "~/Desktop/AI output/ppt/your_project_dir" --style "liquid_glass"
 ```
-*生成 `visual_plan.md`（视觉计划），包含图片分配和视觉 prompt。系统会自动规范化 `content_plan.md`。*
+*生成 `visual_plan.md` 与 `visual_plan.json`（视觉计划 + 执行计划），其中 `visual_plan.md` 只展示逐页视觉描述供审阅，`visual_plan.json` 保留 `final_visual_prompt` 供执行复用。系统会自动规范化 `content_plan.md`。*
 
 **阶段 2：执行生成 (Execute Gate)**
 ```bash
-python3 -m tools.nano_banana_ppt.main execute "output/ppt/your_project_dir" --resolution 1K
+python3 -m tools.nano_banana_ppt.main execute "~/Desktop/AI output/ppt/your_project_dir" --resolution 1K
 ```
 *PM Agent 执行最终审查（资源完整性 + Prompt 质量 + Brief 一致性），然后生成图片并组装 PPTX。*
 
 **快速原型验证 (Prototype)**
 ```bash
-python3 -m tools.nano_banana_ppt.main prototype "output/ppt/your_project_dir" --slides 1 2
+python3 -m tools.nano_banana_ppt.main prototype "~/Desktop/AI output/ppt/your_project_dir" --slides 1 2
 ```
 *仅生成指定页面，快速验证视觉风格。*
 
 **高清放大 (Upscale)**
 ```bash
-python3 -m tools.nano_banana_ppt.main upscale "output/ppt/your_project_dir" --resolution 4K --slides 1 3 5
+python3 -m tools.nano_banana_ppt.main upscale "~/Desktop/AI output/ppt/your_project_dir" --resolution 4K --slides 1 3 5
 ```
 *将指定页面放大到 4K 分辨率。*
 
@@ -170,7 +177,7 @@ python3 -m tools.nano_banana_ppt.main upscale "output/ppt/your_project_dir" --re
 - `--style`: 风格偏好（预设名称或自然语言描述）
 - `--slides`: 仅处理指定页面（用于局部修改）
 - `--force`: 跳过 PM 最终审查（调试用）
-- `--regenerate`: 强制重新生成 plan.json（覆盖缓存）
+- `--regenerate`: 强制重新生成 `visual_plan.json`（覆盖缓存）
 - `--reuse-existing`: 复用完整大纲（避免内容被修改）
 
 ---

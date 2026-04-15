@@ -5,10 +5,11 @@ Plan Sync - 计划文件同步工具
 """
 
 import json
-import re
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+
+from .review_plan import build_content_review_md, build_review_md, parse_review_md
 
 
 def sync_content_plan(
@@ -55,7 +56,9 @@ def sync_content_plan(
             old_md_content = md_path.read_text(encoding='utf-8')
 
         # 生成新的 Markdown
-        new_md_content = _generate_content_plan_markdown(content_plan)
+        meta, _, _ = _load_existing_review_context(md_path)
+        narrative_outline = _content_slides_to_outline(content_plan.get("slides", []))
+        new_md_content = build_content_review_md(narrative_outline, meta)
 
         # 检测变更
         changes = _detect_content_changes(old_md_content, new_md_content)
@@ -129,7 +132,19 @@ def sync_visual_plan(
             old_md_content = md_path.read_text(encoding='utf-8')
 
         # 生成新的 Markdown
-        new_md_content = _generate_visual_plan_markdown(visual_plan)
+        meta, style, manifesto = _load_existing_review_context(md_path)
+        slides = visual_plan.get("slides", [])
+        if slides:
+            narrative_outline = _visual_slides_to_outline(slides)
+            new_md_content = build_review_md(
+                narrative_outline=narrative_outline,
+                style_config=visual_plan.get("style", {}) or style,
+                meta=visual_plan.get("meta", {}) or meta,
+                manifesto=visual_plan.get("manifesto", "") or manifesto,
+                include_execution_prompts=False,
+            )
+        else:
+            new_md_content = _generate_visual_plan_markdown(visual_plan)
 
         # 检测变更
         changes = _detect_visual_changes(old_md_content, new_md_content)
@@ -157,6 +172,107 @@ def sync_visual_plan(
             "message": f"同步失败: {e}",
             "changes": []
         }
+
+
+def _load_existing_review_context(md_path: Path) -> tuple[Dict[str, Any], Dict[str, Any], str]:
+    """从现有 Markdown 中尽量提取 meta/style/manifesto，供同步回写时复用。"""
+    if not md_path.exists():
+        return {}, {}, ""
+
+    try:
+        parsed = parse_review_md(md_path.read_text(encoding='utf-8'), project_dir=str(md_path.parent))
+    except Exception:
+        return {}, {}, ""
+
+    return parsed.get("meta", {}), parsed.get("style", {}), parsed.get("manifesto", "")
+
+
+def _content_slides_to_outline(slides: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """将 content_plan.json 的 slides 转回 build_content_review_md 所需结构。"""
+    outline = []
+
+    for idx, slide in enumerate(slides, start=1):
+        page_num = slide.get("page_num") or slide.get("slide_number") or idx
+        text_content = _build_text_content_from_slide(slide)
+        page = {
+            "page_num": page_num,
+            "type": slide.get("type", "content"),
+            "text_content": text_content,
+            "speaker_notes": slide.get("speaker_notes", ""),
+        }
+
+        if slide.get("image_anchors"):
+            page["image_anchors"] = slide["image_anchors"]
+        if slide.get("native_images"):
+            page["native_images"] = slide["native_images"]
+
+        outline.append(page)
+
+    return outline
+
+
+def _visual_slides_to_outline(slides: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """将 visual_plan.json 的 slides 转回 build_review_md 所需结构。"""
+    outline = []
+    passthrough_fields = (
+        "narrative_role",
+        "one_takeaway",
+        "visual_intent",
+        "image_need_level",
+        "recommended_layout_family",
+        "image_selection_reason",
+        "lift_rate",
+    )
+
+    for idx, slide in enumerate(slides, start=1):
+        page_num = slide.get("page_num") or slide.get("slide_number") or idx
+        text_content = _build_text_content_from_slide(slide)
+        page = {
+            "page_num": page_num,
+            "type": slide.get("type", "content"),
+            "text_content": text_content,
+            "visual_description": slide.get("visual_description", slide.get("visual_suggestion", "")),
+            "final_visual_prompt": slide.get("final_visual_prompt", slide.get("visual_prompt", "")),
+            "speaker_notes": slide.get("speaker_notes", ""),
+            "seed_role": slide.get("seed_role", ""),
+            "seed_usage_rule": slide.get("seed_usage_rule", ""),
+        }
+        if page["visual_description"]:
+            page["visual_suggestion"] = page["visual_description"]
+
+        if slide.get("native_images"):
+            page["native_images"] = slide["native_images"]
+
+        for field in passthrough_fields:
+            if slide.get(field):
+                page[field] = slide[field]
+
+        outline.append(page)
+
+    return outline
+
+
+def _build_text_content_from_slide(slide: Dict[str, Any]) -> Dict[str, Any]:
+    """尽量从 slide 中恢复 text_content 结构。"""
+    text_content = dict(slide.get("text_content") or {})
+
+    if not text_content.get("headline"):
+        text_content["headline"] = slide.get("title", "")
+    text_content.setdefault("subhead", slide.get("subhead", ""))
+    text_content.setdefault("body_format", slide.get("body_format", "bullets"))
+
+    if not text_content.get("body"):
+        raw_content = slide.get("content", "")
+        if isinstance(raw_content, list):
+            body = [str(item).strip() for item in raw_content if str(item).strip()]
+        else:
+            body = [line.strip() for line in str(raw_content).splitlines() if line.strip()]
+        text_content["body"] = body
+
+    if slide.get("table_data") and not text_content.get("table_data"):
+        text_content["table_data"] = slide["table_data"]
+
+    return text_content
 
 
 def _generate_content_plan_markdown(content_plan: Dict[str, Any]) -> str:

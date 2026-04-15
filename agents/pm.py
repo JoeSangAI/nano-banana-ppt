@@ -4,14 +4,19 @@ PM Agent - 产品经理 Agent
 负责接住用户输入并路由到正确阶段，是系统的入口和协调者。
 """
 
+import os
 import logging
+import json
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 
-from ..utils.brief_manager import BriefManager, Brief
 from ..utils.image_assets import ImageAssetsManager, ImageAsset, ImageMode
+from ..utils.provider_config import DEFAULT_LLM_MODEL
 
 logger = logging.getLogger(__name__)
+
+# 固定的输出目录
+DEFAULT_OUTPUT_BASE = Path.home() / "Desktop" / "AI output" / "ppt"
 
 
 class PMAgent:
@@ -30,7 +35,6 @@ class PMAgent:
         self.project_dir.mkdir(parents=True, exist_ok=True)
 
         # 初始化管理器
-        self.brief_manager = BriefManager(str(self.project_dir / "brief.md"))
         self.image_assets_manager = ImageAssetsManager(
             str(self.project_dir / "image_assets.json"),
             client=client
@@ -80,6 +84,542 @@ class PMAgent:
             result["message"] = str(e)
             return result
 
+    def update_state(self, updates: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        更新项目状态（供 Claude Code 调用）
+
+        Args:
+            updates: 状态更新字典，支持的 key：
+                - logo_path: Logo 文件路径
+                - style_guide_file: 设计指导文件路径
+                - style_preference: 风格偏好（文本）
+                - visual_constraints: 视觉约束列表（如 ["插图使用写实风格"]）
+                - briefing: 用户意图
+                - user_confirmed_visual_plan: bool，用户是否已确认 visual_plan
+
+        Returns:
+            {"status": "success", "message": "状态已更新"}
+        """
+        state = ProjectState(str(self.project_dir))
+
+        self._update_assets(state, updates)
+        self._update_constraints(state, updates)
+        self._update_confirmation(state, updates)
+
+        state.persist()
+        return {"status": "success", "message": "状态已更新"}
+
+    def _update_assets(self, state, updates: Dict[str, Any]) -> None:
+        """更新 assets（logo 等）"""
+        if "logo_path" not in updates:
+            return
+
+        logo_path = updates["logo_path"]
+        if os.path.exists(logo_path):
+            assets = state.get("assets", {})
+            assets["logo_path"] = logo_path
+            state.set("assets", assets)
+
+            # 同步更新 meta
+            meta = state.get("meta", {})
+            meta["logo_file"] = logo_path
+            state.set("meta", meta)
+            logger.info(f"✅ Logo 已更新: {logo_path}")
+        else:
+            logger.warning(f"⚠️ Logo 文件不存在: {logo_path}")
+
+    def _update_constraints(self, state, updates: Dict[str, Any]) -> None:
+        """更新 constraints（风格、约束等）"""
+        constraints = state.get("constraints", {})
+
+        if "style_preference" in updates:
+            constraints["style_preference"] = updates["style_preference"]
+
+        if "style_guide_file" in updates:
+            guide_file = updates["style_guide_file"]
+            if os.path.exists(guide_file):
+                with open(guide_file, 'r', encoding='utf-8') as f:
+                    guide_content = f.read()
+                constraints["style_guide_content"] = guide_content
+                constraints["style_guide_file"] = guide_file
+                logger.info(f"✅ 设计指导已加载: {guide_file}")
+            else:
+                logger.warning(f"⚠️ 设计指导文件不存在: {guide_file}")
+
+        if "visual_constraints" in updates:
+            constraints["visual_constraints"] = updates["visual_constraints"]
+
+        if "briefing" in updates:
+            constraints["briefing"] = updates["briefing"]
+
+        state.set("constraints", constraints)
+
+    def _update_confirmation(self, state, updates: Dict[str, Any]) -> None:
+        """更新确认状态"""
+        if "user_confirmed_visual_plan" in updates:
+            state.set("user_confirmed_visual_plan", updates["user_confirmed_visual_plan"])
+
+    def execute_phase(self, phase: str, **kwargs) -> Dict[str, Any]:
+        """
+        执行指定阶段的完整流程。
+
+        Args:
+            phase: 阶段名称 ("content" | "visual" | "execute")
+            **kwargs: 阶段特定参数
+
+        Returns:
+            阶段执行结果
+        """
+        logger.info(f"🚀 PM Agent 开始执行阶段: {phase}")
+
+        if phase == "content":
+            return self._execute_content_phase(**kwargs)
+        elif phase == "visual":
+            return self._execute_visual_phase(**kwargs)
+        elif phase == "execute":
+            return self._execute_execute_phase(**kwargs)
+        else:
+            return {"status": "error", "message": f"未知阶段: {phase}"}
+
+    def _execute_content_phase(
+        self,
+        content_file: str = None,
+        template_file: str = None,
+        logo_file: str = None,
+        page_count: int = None,
+        briefing: str = None,
+        output_name: str = None,
+    ) -> Dict[str, Any]:
+        """
+        执行内容阶段：调用 NarrativeAgent 生成内容大纲。
+
+        Args:
+            content_file: 内容文件路径
+            template_file: 模板文件路径
+            logo_file: Logo 文件路径
+            page_count: 期望页数
+            briefing: 用户意图
+            output_name: 输出名称
+
+        Returns:
+            执行结果
+        """
+        from datetime import date
+        import re
+
+        from ..agents.narrative import NarrativeAgent
+        from ..agents.template import TemplateAgent
+        from ..utils.review_plan import build_content_review_md
+        from ..utils.compile_content_plan import compile_content_plan
+        from ..utils.provider_config import get_llm_api_key, get_llm_api_base
+
+        result = {"status": "success", "message": ""}
+
+        # 1. 确定项目目录（内联 _resolve_project_dir 逻辑以避免循环导入）
+        if content_file:
+            date_prefix = date.today().strftime("%Y%m%d")
+            if output_name:
+                name = output_name
+            else:
+                content_path = Path(content_file)
+                parent_parts = content_path.parts
+                for i, part in enumerate(parent_parts):
+                    if i > 0 and parent_parts[i-1] == "ppt" and part.startswith("202"):
+                        name_part = "_".join(parent_parts[i:]).replace("_content_plan", "").replace("_content", "")
+                        name_part = re.sub(r'^\d{8}_', '', name_part)
+                        name_part = re.sub(r'^\d{8}_\d{8}_', '', name_part)
+                        if name_part:
+                            name = name_part
+                            break
+                else:
+                    name = content_path.stem
+                    name = re.sub(r'_content_plan$', '', name)
+                    name = re.sub(r'_content$', '', name)
+
+            if re.match(r'^\d{8}_', name):
+                dir_name = name
+            else:
+                dir_name = f"{date_prefix}_{name}"
+
+            project_dir = DEFAULT_OUTPUT_BASE / dir_name
+            project_dir.mkdir(parents=True, exist_ok=True)
+            self.project_dir = project_dir
+
+        # 2. 初始化状态管理器
+        state = ProjectState(str(self.project_dir))
+
+        # 3. 读取内容
+        if not content_file or not os.path.exists(content_file):
+            return {"status": "error", "message": f"内容文件不存在: {content_file}"}
+
+        if content_file.lower().endswith('.pdf'):
+            try:
+                import fitz
+                doc = fitz.open(content_file)
+                parts = []
+                for page in doc:
+                    parts.append(page.get_text())
+                doc.close()
+                content_context = "\n\n".join(parts)
+            except Exception as e:
+                return {"status": "error", "message": f"PDF 读取失败: {e}"}
+        else:
+            with open(content_file, 'r', encoding='utf-8') as f:
+                content_context = f.read()
+
+        # 4. 初始化 Agent
+        api_key = get_llm_api_key()
+        api_base = get_llm_api_base()
+        narrative_agent = NarrativeAgent(api_key, api_base, project_dir=str(self.project_dir))
+        template_agent = TemplateAgent(api_key, api_base, output_dir=str(self.project_dir / "template_assets"))
+
+        # 5. 分析内容
+        logger.info("🔍 [Content Phase] 分析内容...")
+        inferred = narrative_agent.analyze_content(content_context)
+        state.set("inferred", inferred)
+
+        # 6. 解析模板
+        template_info = None
+        assets = {}
+        if template_file and os.path.exists(template_file):
+            logger.info("🖼️ [Content Phase] 解析模板...")
+            try:
+                template_info = template_agent.process_template(template_file)
+                assets['template_file'] = template_file
+                assets['logo_path'] = template_info.get('logo_path')
+                assets['template_images'] = template_info.get('reference_images')
+            except Exception as e:
+                logger.warning(f"模板解析失败: {e}")
+
+        # 7. Logo 处理
+        if logo_file and os.path.exists(logo_file):
+            assets['logo_path'] = logo_file
+        elif logo_file:
+            logger.warning(f"Logo 文件不存在: {logo_file}")
+
+        # 8. 品牌色提取
+        if assets.get('logo_path') and not template_info:
+            from ..utils.image_utils import extract_dominant_colors
+            brand_colors = extract_dominant_colors(assets['logo_path'], num_colors=3)
+            if brand_colors:
+                inferred['brand_colors'] = brand_colors
+
+        # 9. 构建约束
+        constraints = {
+            "target_audience": inferred.get("target_audience", "通用受众"),
+            "presentation_type": inferred.get("presentation_type", "商业演示"),
+            "duration": inferred.get("duration", "15分钟"),
+            "style_preference": inferred.get("style_preference", "专业严谨"),
+            "page_count": str(page_count) if page_count else "10",
+            "briefing": briefing,
+        }
+        state.set("constraints", constraints)
+        state.set("assets", assets)
+
+        # 10. 生成叙事大纲
+        logger.info("📝 [Content Phase] 生成叙事大纲...")
+        narrative_outline = narrative_agent.generate_narrative_outline(
+            content_context, constraints, content_file_path=content_file
+        )
+        state.set("narrative_outline", narrative_outline)
+
+        # 11. 保存元数据
+        meta = {
+            "project_name": self.project_dir.name,
+            "project_dir": str(self.project_dir),
+            "content_file": content_file,
+            "template_file": assets.get('template_file'),
+            "logo_file": assets.get('logo_path'),
+        }
+        state.set("meta", meta)
+
+        # 12. 持久化状态
+        state.persist()
+
+        # 13. 生成 content_plan.md
+        content_md_content = build_content_review_md(narrative_outline, meta)
+        content_md_path = self.project_dir / "content_plan.md"
+        with open(content_md_path, 'w', encoding='utf-8') as f:
+            f.write(content_md_content)
+
+        # 14. 编译 content_plan.json
+        compile_content_plan(str(content_md_path), str(self.project_dir / "content_plan.json"))
+
+        logger.info(f"✅ 内容阶段完成: {len(narrative_outline)} 页")
+        result["message"] = f"内容大纲已生成，共 {len(narrative_outline)} 页"
+        result["content_plan_path"] = str(content_md_path)
+        result["page_count"] = len(narrative_outline)
+
+        return result
+
+    def _execute_visual_phase(
+        self,
+        project_dir: str = None,
+        style_preference: str = None,
+    ) -> Dict[str, Any]:
+        """
+        执行视觉阶段：调用 VisualAgent 生成视觉计划。
+
+        Args:
+            project_dir: 项目目录
+            style_preference: 风格偏好
+
+        Returns:
+            执行结果
+        """
+        from ..agents.visual import VisualAgent
+        from ..utils.review_plan import (
+            build_visual_plan_from_content_plan,
+            parse_review_md,
+            derive_technical_plan,
+            generate_per_slide_visual_suggestions,
+            generate_design_manifesto,
+            REVIEW_MD_FILENAME,
+        )
+        from ..utils.provider_config import get_llm_api_key, get_llm_api_base
+
+        result = {"status": "success", "message": ""}
+
+        # 1. 确定项目目录
+        if project_dir:
+            self.project_dir = Path(project_dir)
+
+        # 2. 加载状态
+        state = ProjectState(str(self.project_dir))
+        narrative_outline = state.get("narrative_outline", [])
+        assets = state.get("assets", {})
+        meta = state.get("meta", {})
+        template_info = state.get("template_info")
+        inferred = state.get("inferred", {})
+        constraints = state.get("constraints", {})
+
+        # 3. 检查是否有用户编辑过的 content_plan.md
+        content_md_path = self.project_dir / "content_plan.md"
+        if content_md_path.exists():
+            from ..utils.doc_normalizer import normalize_content_plan
+            with open(content_md_path, 'r', encoding='utf-8') as f:
+                md_text = f.read()
+
+            normalized_content, issues = normalize_content_plan(md_text)
+            if normalized_content != md_text:
+                with open(content_md_path, 'w', encoding='utf-8') as f:
+                    f.write(normalized_content)
+                logger.info("✅ content_plan.md 已规范化")
+
+            parsed = parse_review_md(normalized_content)
+            if parsed and parsed.get("pages"):
+                narrative_outline = parsed.get("pages")
+                state.set("narrative_outline", narrative_outline)
+
+        # 4. 初始化 Agent
+        api_key = get_llm_api_key()
+        api_base = get_llm_api_base()
+        prompt_mode = os.getenv("PROMPT_MODE", "verbose")
+        visual_agent = VisualAgent(api_key, api_base, prompt_mode=prompt_mode)
+
+        # 5. 风格定义
+        logger.info("🎨 [Visual Phase] 定义视觉风格...")
+
+        # 优先使用用户通过 update_state() 提供的风格偏好
+        if not constraints.get("style_preference"):
+            constraints["style_preference"] = style_preference or inferred.get("style_preference", "专业商务")
+
+        # 如果有设计指导文件，注入到 constraints
+        if constraints.get("style_guide_content"):
+            logger.info(f"📄 使用设计指导: {constraints.get('style_guide_file')}")
+            # Visual Agent 会在 define_style() 中读取 style_guide_content
+
+        brand_colors = inferred.get("brand_colors", [])
+        if brand_colors:
+            constraints["brand_colors"] = brand_colors
+
+        style_definition = visual_agent.define_style(constraints, assets, template_info)
+        if isinstance(style_definition, tuple):
+            style_desc_str, style_config = style_definition
+        else:
+            style_desc_str = str(style_definition)
+            style_config = {"description": style_desc_str, "palette": [], "mode": "ai_minting"}
+
+        state.set("style_config", style_config)
+
+        # 6. 生成每页视觉描述
+        logger.info("📋 [Visual Phase] 生成每页视觉描述...")
+
+        # 传递用户的视觉约束（如"插图使用写实风格"）
+        visual_constraints = constraints.get("visual_constraints", [])
+
+        per_slide_descriptions = generate_per_slide_visual_suggestions(
+            narrative_outline, style_config, api_key, api_base,
+            visual_constraints=visual_constraints  # 新增参数
+        )
+
+        for page in narrative_outline:
+            page_num = page.get("page_num")
+            if page_num in per_slide_descriptions:
+                page["visual_description"] = per_slide_descriptions[page_num]
+                page["visual_suggestion"] = per_slide_descriptions[page_num]
+
+        # 7. 生成 Design Manifesto
+        logger.info("📋 [Visual Phase] 生成 Design Manifesto...")
+        is_template_mode = bool(meta.get("template_file"))
+        parsed_stub = {"pages": narrative_outline, "style": style_config}
+        manifesto_dict = generate_design_manifesto(
+            parsed=parsed_stub,
+            template_mode=is_template_mode,
+            client=visual_agent.client
+        )
+        manifesto_text = manifesto_dict.get("chinese_proposal", "")
+
+        state.set("manifesto_bans", manifesto_dict.get("english_cliche_bans", ""))
+        state.set("visual_diversity_strategy", manifesto_dict.get("visual_diversity_strategy", ""))
+
+        # 8. 生成最终视觉计划
+        logger.info("🧠 [Visual Phase] 生成最终视觉计划...")
+        style_config_with_manifesto = dict(style_config)
+        style_config_with_manifesto["manifesto"] = manifesto_text
+
+        generated_slides = visual_agent.generate_visual_plan(
+            narrative_outline=narrative_outline,
+            style_definition_tuple=(style_config_with_manifesto.get("description", style_desc_str), style_config_with_manifesto),
+            assets={"logo_path": meta.get("logo_file")},
+            template_info=template_info,
+            meta=meta,
+        )
+
+        # 9. 生成 visual_plan.md
+        logger.info("📋 [Visual Phase] 生成 visual_plan.md...")
+        review_md_path = self.project_dir / REVIEW_MD_FILENAME
+
+        review_md_content = build_visual_plan_from_content_plan(
+            str(content_md_path),
+            style_config,
+            meta,
+            manifesto=manifesto_text,
+            per_slide_descriptions=per_slide_descriptions,
+            state_narrative_outline=narrative_outline,
+            generated_slides=generated_slides,
+        )
+        with open(review_md_path, 'w', encoding='utf-8') as f:
+            f.write(review_md_content)
+
+        # 10. 生成 visual_plan.json
+        parsed_review = parse_review_md(review_md_content, project_dir=str(self.project_dir))
+        visual_plan_data = derive_technical_plan(
+            parsed_review,
+            str(self.project_dir),
+            meta.get("content_file", str(content_md_path)),
+            api_key,
+            api_base,
+        )
+        visual_plan_json_path = self.project_dir / "visual_plan.json"
+        with open(visual_plan_json_path, 'w', encoding='utf-8') as f:
+            json.dump(visual_plan_data, f, ensure_ascii=False, indent=2)
+
+        # 11. 持久化状态
+        state.persist()
+
+        logger.info(f"✅ 视觉阶段完成: {len(generated_slides)} 页")
+        result["message"] = f"视觉计划已生成，共 {len(generated_slides)} 页"
+        result["visual_plan_path"] = str(review_md_path)
+
+        return result
+
+    def _execute_execute_phase(
+        self,
+        plan_file: str = None,
+        output_name: str = None,
+        resolution: str = "1K",
+        slide_filter: list = None,
+        reassemble_only: bool = False,
+        force: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        执行阶段：调用 executor 生成最终 PPT。
+
+        Args:
+            plan_file: 计划文件路径或项目目录
+            output_name: 输出名称
+            resolution: 分辨率
+            slide_filter: 仅执行的页面
+            reassemble_only: 仅重新组装
+            force: 强制执行
+
+        Returns:
+            执行结果
+        """
+        from ..core.executor import execute_plan
+        from ..utils.review_plan import REVIEW_MD_FILENAME
+        from ..utils.provider_config import get_llm_api_key, get_llm_api_base
+
+        result = {"status": "success", "message": ""}
+
+        # 1. 解析输入
+        if plan_file:
+            plan_path = Path(plan_file)
+            if plan_path.is_dir():
+                # 优先使用 visual_plan.json（已确认的技术计划）
+                if (plan_path / "visual_plan.json").exists():
+                    plan_file = str(plan_path / "visual_plan.json")
+                    project_dir = str(plan_path)
+                elif (plan_path / REVIEW_MD_FILENAME).exists():
+                    plan_file = str(plan_path / REVIEW_MD_FILENAME)
+                    project_dir = str(plan_path)
+                else:
+                    return {"status": "error", "message": f"目录中未找到计划文件: {plan_path}"}
+            else:
+                # 如果传入的是文件路径，project_dir 是文件所在目录
+                project_dir = str(plan_path.parent)
+            self.project_dir = Path(project_dir)
+
+        # 2. 执行最终意图审查（智能跳过）
+        state = ProjectState(str(self.project_dir))
+        user_confirmed = state.get("user_confirmed_visual_plan", False)
+
+        if not force and not user_confirmed:
+            logger.info("🔍 执行最终意图审查...")
+            review_report = self.final_intent_review()
+            if not review_report["passed"]:
+                result["status"] = "error"
+                result["message"] = f"最终审查未通过: {review_report['summary']['blocking_issues']} 个阻塞问题"
+                return result
+        else:
+            if user_confirmed:
+                logger.info("⏭️ 用户已确认 visual_plan，跳过审查")
+            else:
+                logger.info("⏭️ 使用 --force 参数，跳过审查")
+
+        # 3. 执行生成
+        logger.info("⚡ [Execute Phase] 开始生成 PPT...")
+        logger.info(f"📄 读取计划文件: {plan_file}")
+
+        with open(plan_file, 'r', encoding='utf-8') as f:
+            plan_data = json.load(f)
+
+        slides = plan_data if isinstance(plan_data, list) else plan_data.get("slides", plan_data)
+        name = output_name or plan_data.get("meta", {}).get("project_name", self.project_dir.name)
+
+        exec_plan_file = str(self.project_dir / "_exec_slides.json")
+        with open(exec_plan_file, 'w', encoding='utf-8') as f:
+            json.dump(slides, f, ensure_ascii=False, indent=2)
+
+        out_path, _ = execute_plan(
+            exec_plan_file,
+            name,
+            template_path=plan_data.get("meta", {}).get("template_file"),
+            project_dir=str(self.project_dir),
+            resolution=resolution,
+            slide_filter=slide_filter,
+            reassemble_only=reassemble_only,
+        )
+
+        if os.path.exists(exec_plan_file):
+            os.remove(exec_plan_file)
+
+        result["message"] = "PPT 生成完成"
+        result["output_path"] = str(out_path)
+
+        return result
+
     def determine_gate(self) -> str:
         """
         判断当前应进入哪个 Gate
@@ -87,11 +627,6 @@ class PMAgent:
         Returns:
             Gate 名称：Content / Visual / Execute
         """
-        # 检查是否有 brief
-        brief = self.brief_manager.load()
-        if not brief:
-            return "Content"
-
         # 检查是否有 content_plan
         content_plan_path = self.project_dir / "content_plan.md"
         if not content_plan_path.exists():
@@ -325,7 +860,7 @@ class PMAgent:
         try:
             # 调用 LLM
             response = self.client.chat.completions.create(
-                model="gemini-2.0-flash-exp",
+                model=DEFAULT_LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
             )
@@ -344,51 +879,12 @@ class PMAgent:
 
             logger.info(f"✅ 意图分析完成: {result['input_type']}")
 
-            # 更新或创建 Brief
-            brief = self.brief_manager.load()
-            if not brief:
-                # 创建新 Brief
-                brief = Brief(
-                    goal=result["goal"],
-                    audience=result.get("audience"),
-                    style_preference=result.get("tone"),
-                    constraints=result.get("constraints", []),
-                    image_requirements=result.get("image_anchors", []),
-                )
-                self.brief_manager.save(brief)
-                logger.info("✅ 创建新 Brief")
-            else:
-                # 更新现有 Brief
-                update_fields = {}
-                if result.get("goal"):
-                    update_fields["goal"] = result["goal"]
-                if result.get("audience"):
-                    update_fields["audience"] = result["audience"]
-                if result.get("tone"):
-                    update_fields["style_preference"] = result["tone"]
-                if result.get("constraints"):
-                    # 合并约束（去重）
-                    existing = set(brief.constraints)
-                    new_constraints = [c for c in result["constraints"] if c not in existing]
-                    update_fields["constraints"] = brief.constraints + new_constraints
-                if result.get("image_anchors"):
-                    # 合并图片需求（去重）
-                    existing_anchors = {req.get("anchor") for req in brief.image_requirements}
-                    new_reqs = [req for req in result["image_anchors"] if req.get("anchor") not in existing_anchors]
-                    update_fields["image_requirements"] = brief.image_requirements + new_reqs
-
-                if update_fields:
-                    self.brief_manager.update(**update_fields)
-                    logger.info(f"✅ 更新 Brief: {list(update_fields.keys())}")
+            # Brief 功能已移除，意图分析结果仅用于日志记录
 
         except Exception as e:
             logger.error(f"整理用户意图失败: {e}")
-            # 失败时创建一个最小化的 Brief
-            brief = self.brief_manager.load()
-            if not brief:
-                brief = Brief(goal=text[:200])  # 使用前 200 字符作为 goal
-                self.brief_manager.save(brief)
-                logger.warning("⚠️ 使用简化 Brief")
+            # 直接抛出异常，不再使用简化 Brief 降级
+            raise RuntimeError(f"PM Agent 整理用户意图失败: {e}")
 
     def final_intent_review(self) -> Dict[str, Any]:
         """
@@ -487,25 +983,7 @@ class PMAgent:
             logger.warning("⚠️ visual_plan.json 不存在，跳过 Prompt 审查")
             report["prompt_review"] = {"skipped": "visual_plan.json not found"}
 
-        # 3. Brief 与 visual_plan 的一致性检查
-        logger.info("🔗 检查 Brief 与 Visual Plan 的一致性...")
-        try:
-            consistency_issues = self._check_brief_visual_consistency()
-            report["consistency_check"] = consistency_issues
-
-            if consistency_issues:
-                report["summary"]["total_issues"] += len(consistency_issues)
-                report["summary"]["warnings"] += len(consistency_issues)
-                logger.warning(f"⚠️ 发现 {len(consistency_issues)} 个一致性问题")
-                for issue in consistency_issues:
-                    logger.warning(f"  - {issue}")
-            else:
-                logger.info("✅ 一致性检查通过")
-
-        except Exception as e:
-            logger.error(f"一致性检查失败: {e}")
-            report["consistency_check"] = {"error": str(e)}
-            report["summary"]["warnings"] += 1
+        # 3. Brief 一致性检查已移除（Brief 模块已删除）
 
         # 4. 判断是否通过
         report["passed"] = report["summary"]["blocking_issues"] == 0
@@ -526,71 +1004,6 @@ class PMAgent:
         logger.info("=" * 60 + "\n")
 
         return report
-
-    def _check_brief_visual_consistency(self) -> List[str]:
-        """
-        检查 Brief 与 visual_plan 的一致性
-
-        Returns:
-            一致性问题列表
-        """
-        import json
-
-        issues = []
-
-        # 加载 Brief
-        brief = self.brief_manager.load()
-        if not brief:
-            issues.append("Brief 文件不存在")
-            return issues
-
-        # 加载 visual_plan.json
-        visual_plan_json = self.project_dir / "visual_plan.json"
-        if not visual_plan_json.exists():
-            issues.append("visual_plan.json 文件不存在")
-            return issues
-
-        try:
-            with open(visual_plan_json, 'r', encoding='utf-8') as f:
-                visual_plan = json.load(f)
-        except Exception as e:
-            issues.append(f"无法读取 visual_plan.json: {e}")
-            return issues
-
-        # 检查图片需求是否被满足
-        if brief.image_requirements:
-            brief_anchors = {req.get("anchor") for req in brief.image_requirements if req.get("anchor")}
-            visual_anchors = set()
-
-            for page in visual_plan.get("pages", []):
-                for img in page.get("images", []):
-                    anchor = img.get("semantic_anchor")
-                    if anchor:
-                        visual_anchors.add(anchor)
-
-            # 检查是否有未满足的图片需求
-            missing_anchors = brief_anchors - visual_anchors
-            if missing_anchors:
-                issues.append(f"Brief 中的图片需求未在 visual_plan 中体现: {', '.join(missing_anchors)}")
-
-        # 检查风格偏好是否一致
-        if brief.style_preference:
-            # 这里可以进一步检查 visual_plan 中的 prompt 是否符合风格偏好
-            # 简化实现：只检查是否有风格配置
-            style_mentioned = False
-            for page in visual_plan.get("pages", []):
-                for img in page.get("images", []):
-                    prompt = img.get("visual_prompt", "")
-                    if brief.style_preference.lower() in prompt.lower():
-                        style_mentioned = True
-                        break
-                if style_mentioned:
-                    break
-
-            if not style_mentioned:
-                issues.append(f"Brief 中的风格偏好「{brief.style_preference}」未在 visual_plan 的 prompt 中体现")
-
-        return issues
 
     def analyze_modification(self, modification_request: str, target_pages: Optional[List[int]] = None) -> Dict[str, Any]:
         """
@@ -666,7 +1079,7 @@ class PMAgent:
         try:
             # 调用 LLM 分析
             response = self.client.chat.completions.create(
-                model="gemini-2.0-flash-exp",
+                model=DEFAULT_LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
             )
@@ -747,3 +1160,154 @@ class PMAgent:
 
         # 默认返回空列表
         return []
+
+
+# ──────────────────────────────────────────────
+# ProjectState: 状态管理
+# ──────────────────────────────────────────────
+
+class ProjectState:
+    """
+    项目状态管理器。
+
+    负责：
+    - in-memory 状态（当前会话）
+    - 原子性持久化到 _content_state.json
+    - 快照 + 回滚机制
+    """
+
+    STATE_FILE = "_content_state.json"
+
+    def __init__(self, project_dir: str):
+        self.project_dir = Path(project_dir)
+        self.project_dir.mkdir(parents=True, exist_ok=True)
+        self._in_memory: Dict[str, Any] = {}
+        self._dirty = False
+        self._snapshots: List[Dict[str, str]] = []
+
+        # 加载已有状态（如果存在）
+        self._load()
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """获取状态值（优先内存，其次持久化）"""
+        if key in self._in_memory:
+            return self._in_memory[key]
+
+        # 尝试从持久化数据获取
+        state_data = self._load()
+        if state_data and "data" in state_data and key in state_data["data"]:
+            return state_data["data"][key]
+
+        return default
+
+    def set(self, key: str, value: Any) -> None:
+        """设置状态值（仅更新内存，标记 dirty）"""
+        self._in_memory[key] = value
+        self._dirty = True
+
+    def get_all(self) -> Dict[str, Any]:
+        """获取所有状态数据"""
+        state_data = self._load()
+        if state_data and "data" in state_data:
+            return {**state_data["data"], **self._in_memory}
+        return self._in_memory.copy()
+
+    def persist(self) -> None:
+        """原子性持久化到 _content_state.json"""
+        if not self._dirty:
+            return
+
+        import tempfile
+        import time
+
+        # 构建完整状态
+        state_data = self._load() or {
+            "version": "2.0",
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "snapshots": [],
+        }
+
+        # 更新时间戳
+        state_data["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        state_data["data"] = {**state_data.get("data", {}), **self._in_memory}
+        state_data["snapshots"] = self._snapshots
+
+        # 原子性写入：先写临时文件，再替换
+        tmp_path = self.project_dir / f"_state.tmp_{os.getpid()}.json"
+        target_path = self.project_dir / self.STATE_FILE
+
+        try:
+            with open(tmp_path, 'w', encoding='utf-8') as f:
+                json.dump(state_data, f, ensure_ascii=False, indent=2)
+
+            # 原子性替换
+            tmp_path.replace(target_path)
+            self._dirty = False
+        finally:
+            # 清理临时文件
+            if tmp_path.exists():
+                tmp_path.unlink()
+
+    def _load(self) -> Optional[Dict[str, Any]]:
+        """从持久化文件加载状态"""
+        state_file = self.project_dir / self.STATE_FILE
+        if not state_file.exists():
+            return None
+
+        try:
+            with open(state_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return None
+
+    def snapshot(self, reason: str) -> Path:
+        """创建版本快照（用于回滚）"""
+        import time
+        import shutil
+
+        snapshot_id = f"v{int(time.time())}"
+        snapshot_dir = self.project_dir / ".snapshots"
+        snapshot_dir.mkdir(exist_ok=True)
+
+        snapshot_path = snapshot_dir / f"{snapshot_id}_{reason}.json"
+
+        # 复制当前状态到快照
+        state_file = self.project_dir / self.STATE_FILE
+        if state_file.exists():
+            shutil.copy(str(state_file), str(snapshot_path))
+
+        # 记录快照
+        self._snapshots.append({
+            "id": snapshot_id,
+            "reason": reason,
+            "path": str(snapshot_path),
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        })
+
+        self._dirty = True
+        return snapshot_path
+
+    def rollback(self, snapshot_path: Path) -> bool:
+        """回滚到指定快照"""
+        import shutil
+
+        if not snapshot_path.exists():
+            logger.error(f"快照文件不存在: {snapshot_path}")
+            return False
+
+        try:
+            state_file = self.project_dir / self.STATE_FILE
+            shutil.copy(str(snapshot_path), str(state_file))
+
+            # 重新加载
+            state_data = self._load()
+            if state_data and "data" in state_data:
+                self._in_memory = state_data["data"]
+                self._snapshots = state_data.get("snapshots", [])
+
+            self._dirty = False
+            logger.info(f"✅ 已回滚到快照: {snapshot_path}")
+            return True
+        except Exception as e:
+            logger.error(f"回滚失败: {e}")
+            return False
